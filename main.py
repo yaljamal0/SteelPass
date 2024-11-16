@@ -1,5 +1,6 @@
 from cmu_graphics import *
 import time
+import string
 
 class Element:
     def checkMouseClick(self, mouseX, mouseY):
@@ -65,9 +66,15 @@ def onKeyHold(app, keys):
         time.sleep(0.1)
 
 def onKeyPress(app, key):
-    if key == 'space':
+    if key == 'up':
+        app.textboxes[app.inFocusTB].blinkCursor(clear=True)
+        app.inFocusTB -= 1 if app.inFocusTB > 0 else 0
+    elif key == 'down':
+        app.textboxes[app.inFocusTB].blinkCursor(clear=True)
+        app.inFocusTB += 1 if app.inFocusTB < len(app.textboxes)-1 else 0
+    elif key == 'space':
         app.textboxes[app.inFocusTB].write(' ')
-    elif key != 'backspace':
+    elif key in string.printable:
         app.textboxes[app.inFocusTB].write(key)
 
 def onMousePress(app, mouseX, mouseY):
