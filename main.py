@@ -1,6 +1,7 @@
 from cmu_graphics import *
 import time
 import string
+import os
 
 class Element:
     def checkMouseClick(self, mouseX, mouseY):
@@ -10,68 +11,110 @@ class Element:
         return False
 
 class Textbox(Element):
+    fontSize = 20
+    characterWidth = (fontSize*3)//5
+
     def __init__(self, x, y, w, h):
         self.x = x
         self.y = y
         self.w = w
         self.h = h
-        self.text = '  '
+        self.text = ''
+        self.maxChars = self.w//Textbox.characterWidth - 1
+        self.viewIndex = 0
+        self.cursorIndex = 0
 
     def draw(self, app):
         drawRect(self.x, self.y, self.w, self.h, fill=None,
                     border=app.steelGray, borderWidth=2)
-        drawLabel(self.text[::-1][:self.w//14][::-1], self.x+self.w/10,
-                    self.y+self.h/2, align='left', fill=app.steelGray, size=24)
+        drawLabel(self.text[self.viewIndex:self.viewIndex+self.maxChars],
+                    #self.text[::-1][:self.maxChars][::-1],
+                    self.x+Textbox.characterWidth, self.y+self.h/2,
+                    align='left', fill=app.steelGray, size=Textbox.fontSize,
+                    font='monospace')
 
-    def blinkCursor(self, clear=False):
-        if self.text.endswith('| ') or clear:
-            self.text = self.text[:-2] + '  '
-        else:
-            self.text = self.text[:-2] + '| '
+    def blinkCursor(self):
+        offset = min(self.cursorIndex*Textbox.characterWidth,
+                Textbox.characterWidth*self.maxChars) + Textbox.characterWidth
+        drawLine(self.x + offset, self.y+Textbox.characterWidth,
+                self.x + offset, self.y+self.h-Textbox.characterWidth,
+                fill='white', lineWidth=1)
 
     def write(self, data):
-        self.text = self.text[:-2] + data + self.text[-2:]
+        self.text = self.text[:self.cursorIndex] + data + self.text[self.cursorIndex:]
+        self.shiftCursor(1)
 
     def erase(self):
-        self.text = self.text[:-3] + self.text[-2:]
+        self.text = self.text[:self.cursorIndex-1] + self.text[self.cursorIndex:]
+        self.shiftCursor(-1)
 
-def onAppStart(app):
+    def copyToClipboard(self):
+        os.system(f'echo {self.text} | xsel --clipboard')
+
+    def shiftCursor(self, steps, location=None):
+        if location:
+            self.cursorIndex = location
+        elif 0 <= self.cursorIndex + steps <= len(self.text):
+            self.cursorIndex += steps
+        if self.cursorIndex > self.viewIndex+self.maxChars or self.cursorIndex < self.viewIndex:
+            self.viewIndex += steps
+        print(len(self.text), self.cursorIndex)
+
+    def checkMouseClick(self, mouseX, mouseY):
+        if self.x < mouseX < self.x + self.w and \
+            self.y < mouseY < self.y + self.h:
+            return True
+        return False
+
+def reset(app):
+    app.stepsPerSecond = 60
+    app.steps = 0
+    app.keyHoldSpeed = app.stepsPerSecond//8 # 8 presses a second
+    app.keyHoldCounter = 0
+
     app.ironGray = rgb(109, 110, 113)
     app.steelGray = rgb(224, 224, 224)
 
-    app.steps = 0
-
-    titleBox = Textbox(app.width/2-500/2, \
-        200, 500, 50)
-    usernameBox = Textbox(app.width/2-500/2, \
-        280, 500, 50)
-    passwordBox = Textbox(app.width/2-500/2, \
-        360, 500, 50)
-    app.textboxes = [titleBox, usernameBox, passwordBox]
+    app.textboxes = [
+        Textbox(app.width/2-500/2, 200, 500, 50), # Title box
+        Textbox(app.width/2-500/2, 280, 500, 50), # Username box
+        Textbox(app.width/2-500/2, 360, 500, 50) # Password box
+    ]
     app.inFocusTB = 0
+
+def onAppStart(app):
+    reset(app)
 
 def redrawAll(app):
     drawRect(0, 0, app.width, app.height, fill=app.ironGray)
     for textbox in app.textboxes:
         textbox.draw(app)
+    if 0 < app.steps % app.stepsPerSecond < app.stepsPerSecond//2:
+        app.textboxes[app.inFocusTB].blinkCursor()
 
 def onStep(app):
     app.steps += 1
-    if app.steps % 30 == 0:
-        app.textboxes[app.inFocusTB].blinkCursor()
+    if app.keyHoldCounter:
+        app.keyHoldCounter -= 1
 
 def onKeyHold(app, keys):
-    if 'backspace' in keys:
-        app.textboxes[app.inFocusTB].erase()
-        time.sleep(0.1)
+    if app.keyHoldCounter == 0:
+        if 'backspace' in keys:
+            app.textboxes[app.inFocusTB].erase()
+        elif 'right' in keys:
+            app.textboxes[app.inFocusTB].shiftCursor(1)
+        elif 'left' in keys:
+            app.textboxes[app.inFocusTB].shiftCursor(-1)
+        app.keyHoldCounter = app.keyHoldSpeed
 
-def onKeyPress(app, key):
-    if key == 'up':
-        app.textboxes[app.inFocusTB].blinkCursor(clear=True)
-        app.inFocusTB -= 1 if app.inFocusTB > 0 else 0
-    elif key == 'down':
-        app.textboxes[app.inFocusTB].blinkCursor(clear=True)
-        app.inFocusTB += 1 if app.inFocusTB < len(app.textboxes)-1 else 0
+def onKeyPress(app, key, modifiers):
+    if key == 'backspace':
+        app.keyHoldCounter = 0
+    elif key == 'tab':
+        if 'shift' in modifiers:
+            app.inFocusTB -= 1 if app.inFocusTB > 0 else 0
+        else:
+            app.inFocusTB += 1 if app.inFocusTB < len(app.textboxes)-1 else 0
     elif key == 'space':
         app.textboxes[app.inFocusTB].write(' ')
     elif key in string.printable:
@@ -80,7 +123,6 @@ def onKeyPress(app, key):
 def onMousePress(app, mouseX, mouseY):
     for i in range(len(app.textboxes)):
         if app.textboxes[i].checkMouseClick(mouseX, mouseY):
-            app.textboxes[app.inFocusTB].blinkCursor(clear=True)
             app.inFocusTB = i
 
 runApp(width=800, height=600)
