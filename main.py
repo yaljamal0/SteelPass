@@ -4,17 +4,17 @@ import string
 import os
 import random
 
-class Textbox:
-    fontSize = 20
-    characterWidth = (fontSize*3)//5
+fontSize = 20
+characterWidth = (fontSize*3)//5
 
+class Textbox:
     def __init__(self, x, y, w, h):
         self.x = x
         self.y = y
         self.w = w
         self.h = h
         self.text = ''
-        self.maxChars = self.w//Textbox.characterWidth - 1
+        self.maxChars = self.w//characterWidth - 1
         self.viewIndex = 0
         self.cursorIndex = 0
 
@@ -22,16 +22,16 @@ class Textbox:
         drawRect(self.x, self.y, self.w, self.h, fill=None,
                     border=app.steelGray, borderWidth=2)
         drawLabel(self.text[self.viewIndex:self.viewIndex+self.maxChars],
-                    self.x+Textbox.characterWidth, self.y+self.h/2,
-                    align='left', fill=app.steelGray, size=Textbox.fontSize,
+                    self.x+characterWidth, self.y+self.h/2,
+                    align='left', fill=app.steelGray, size=fontSize,
                     font='monospace')
 
     def blinkCursor(self):
         offset = len(
                     self.text[self.viewIndex:self.cursorIndex]
-                    ) * Textbox.characterWidth + Textbox.characterWidth
-        drawLine(self.x + offset, self.y+Textbox.characterWidth,
-                self.x + offset, self.y+self.h-Textbox.characterWidth,
+                    ) * characterWidth + characterWidth
+        drawLine(self.x + offset, self.y+characterWidth,
+                self.x + offset, self.y+self.h-characterWidth,
                 fill='white', lineWidth=1)
 
     def shiftCursor(self, steps):
@@ -46,11 +46,11 @@ class Textbox:
             self.cursorIndex = len(self.text)
 
     def checkMouseClick(self, mouseX, mouseY):
-        if not (self.x+Textbox.characterWidth < mouseX < self.x + self.w \
-            - Textbox.characterWidth and self.y < mouseY < self.y + self.h):
+        if not (self.x+characterWidth < mouseX < self.x + self.w \
+            - characterWidth and self.y < mouseY < self.y + self.h):
             return
         self.shiftCursor(
-            int((mouseX-self.x-Textbox.characterWidth/2)/Textbox.characterWidth)
+            int((mouseX-self.x-characterWidth/2)/characterWidth)
             + self.viewIndex - self.cursorIndex)
         return True
 
@@ -76,17 +76,21 @@ class PasswordField(Textbox):
         self.text = password
 
 class Button:
-    def __init__(self, x, y, w, h, action):
+    def __init__(self, x, y, w, h, action, label=''):
         self.x = x
         self.y = y
         self.w = w
         self.h = h
         self.action = action
-        self.color = 'blue'
+        self.label = label
 
     def draw(self, app):
-        drawRect(self.x, self.y, self.w, self.h, fill=self.color,
+        drawRect(self.x, self.y, self.w, self.h, fill=None,
                     border=app.steelGray)
+        if self.label:
+            drawLabel(self.label, self.x + characterWidth,
+            self.y + characterWidth, align='top-left', fill=app.steelGray,
+            size=fontSize)
 
     def checkMouseClick(self, mouseX, mouseY):
         if self.x < mouseX < self.x + self.w and \
@@ -99,8 +103,9 @@ def reset(app):
     app.keyHoldSpeed = app.stepsPerSecond//8 # 8 presses a second
     app.keyHoldCounter = 0
 
-    app.ironGray = rgb(109, 110, 113)
-    app.steelGray = rgb(224, 224, 224)
+    app.ironGray = rgb(52,52,50)
+    app.steelGray = gradient(rgb(153,158,152), rgb(203,205,205),
+                            start='top-left')
 
     app.textboxes = [
         Textbox(app.width/2-500/2-50, 200, 500, 50), # Title box
@@ -109,7 +114,8 @@ def reset(app):
     ]
 
     app.buttons = [
-        Button(app.width/2+220, 365, 40, 40, app.textboxes[2].generatePassword)
+        Button(app.width/2+220, 365, 40, 40, app.textboxes[2].generatePassword),
+        Button(app.width/2-500/2-50, 440, 120, 40, print, 'Save Entry')
     ]
 
     app.inFocusTB = 0

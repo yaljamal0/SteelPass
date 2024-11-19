@@ -11,3 +11,5 @@
 **Solution:** Use monospace.
 
 - How do I name constants in camelCase?
+
+- Text zigzags after writing or removing a space character at the end
