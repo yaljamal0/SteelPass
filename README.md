@@ -10,6 +10,7 @@
 - ~~No way to tell where the mouse press happened relative to written characters (for selecting text or inserting between characters).~~
 **Solution:** Use monospace.
 
-- How do I name constants in camelCase?
+- ~~How do I name constants in camelCase?~~
+**Solution:** Don't capitalize all letters (use normal camelCase).
 
 - Text zigzags after writing or removing a space character at the end
