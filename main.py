@@ -4,6 +4,14 @@ import string
 import os
 import random
 import sqlite3
+from PIL import Image
+
+# global constants
+fontSize = 20
+characterWidth = (fontSize*3)//5
+ironGray = rgb(52,52,50)
+steelGray = gradient(rgb(153,158,152), rgb(203,205,205), start='top-left')
+steelImage = CMUImage(Image.open('steel.jpeg'))
 
 # create a new database and table if they do not already exist
 def createDB():
@@ -40,6 +48,7 @@ def addEntry(title, username, password, color):
     ''', (title, username, password, color))
     conn.commit()
     conn.close()
+    return c.lastrowid
 
 # update an entry if it has the same title
 def updateEntry(entryID, title, username, password, color):
@@ -52,10 +61,6 @@ def updateEntry(entryID, title, username, password, color):
     ''', (title, username, password, color, entryID))
     conn.commit()
     conn.close()
-
-# global font variables
-fontSize = 20
-characterWidth = (fontSize*3)//5
 
 class Textbox:
     def __init__(self, x, y, w, h, text=''):
@@ -75,13 +80,13 @@ class Textbox:
         # index of the blinking cursor that controls the view
         self.cursorIndex = len(text)
 
-    def draw(self, app):
+    def draw(self):
         drawRect(self.x, self.y, self.w, self.h, fill=None,
-                    border=app.steelGray, borderWidth=2)
+                    border=steelGray, borderWidth=2)
         # start characterWidth pixels to the right after the rectangle left edge
         drawLabel(self.text[self.viewIndex:self.viewIndex+self.maxChars],
                     self.x+characterWidth, self.y+self.h/2,
-                    align='left', fill=app.steelGray, size=fontSize,
+                    align='left', fill=steelGray, size=fontSize,
                     font='monospace')
 
     def blinkCursor(self):
@@ -138,12 +143,19 @@ class Textbox:
 
 # special textbox that generates passwords
 class PasswordField(Textbox):
-    def generatePassword(self, length):
+    def generatePassword(self, length, uppers, lowers, nums, specials):
         password = ''
-        characters = string.ascii_letters + string.digits + string.punctuation
-        for i in range(length):
-            password += random.choice(characters)
+        characters = ''
+        characters += string.ascii_uppercase if uppers else ''
+        characters += string.ascii_lowercase if lowers else ''
+        characters += string.digits if nums else ''
+        characters += string.punctuation if specials else ''
+        if characters:
+            for i in range(length):
+                password += random.choice(characters)
         self.text = password
+        self.viewIndex = 0
+        self.cursorIndex = len(self.text)
 
 class Button:
     def __init__(self, x, y, w, h, content, action):
@@ -155,21 +167,39 @@ class Button:
         # callback function that the button will run on click
         self.action = action
 
-    def draw(self, app):
-        color = None
-        if self.content in ['red', 'green', 'blue', 'yellow']:
-            color = self.content
-        elif self.content:
+    def draw(self):
+        drawRect(self.x, self.y, self.w, self.h, fill=None,
+                 border=steelGray)
+        if self.content:
             drawLabel(self.content, self.x+self.w/2, self.y+self.h/2,
-                      fill=app.steelGray, size=fontSize)
-        drawRect(self.x, self.y, self.w, self.h, fill=color,
-                    border=app.steelGray)
+                      fill=steelGray, size=fontSize, font='monospace')
 
-    def checkMouseClick(self, mouseX, mouseY, app):
+    def checkMouseClick(self, mouseX, mouseY):
         if self.x < mouseX < self.x + self.w and \
         self.y < mouseY < self.y + self.h:
             # we use * to parse the args in a tuple
             self.action()
+
+class ActivateButton(Button):
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.fill = steelGray
+        self.fontColor = 'black'
+
+    def activate(self):
+        if self.fill == None:
+            self.fill = steelGray
+            self.fontColor = 'black'
+        else:
+            self.fill = None
+            self.fontColor = steelGray
+
+    def draw(self):
+        drawRect(self.x, self.y, self.w, self.h, fill=self.fill,
+                 border=steelGray)
+        if self.content:
+            drawLabel(self.content, self.x+self.w/2, self.y+self.h/2,
+                      fill=self.fontColor, size=fontSize, font='monospace')
 
 # a form is a view or window that houses specific elements
 class Form:
@@ -180,9 +210,9 @@ class Form:
         self.x = app.width/2-self.w/2
         self.y = app.height/2-self.h/2
 
-    def draw(self, app, border=None):
-        drawRect(self.x, self.y, self.w, self.h, fill=app.ironGray,
-                 border=border)
+    def draw(self, opacity=10, border=None):
+        drawRect(self.x, self.y, self.w, self.h, fill='black')
+        drawImage(steelImage, self.x, self.y, width=self.w, height=self.h, opacity=opacity, border=border)
 
 class EntryView(Form):
     def __init__(self, app, w, h, entry):
@@ -197,17 +227,23 @@ class EntryView(Form):
 
         self.buttons = [
             Button(app.width-60, 20, 40, 40, 'N', lambda: NewEntryForm(app, 0.8*app.width, 0.8*app.height, app.forms.index(self))),
-            Button(app.width-120, 20, 40, 40, 'E', lambda: NewEntryForm(app, 0.8*app.width, 0.8*app.height, app.forms.index(self), entry))
+            Button(app.width-120, 20, 40, 40, 'E', lambda: NewEntryForm(app, 0.8*app.width, 0.8*app.height, app.forms.index(self), entry)),
+            Button(20, app.height/2, 40, 40, '<', lambda: self.changeFormView(app, -1)),
+            Button(app.width-60, app.height/2, 40, 40, '>', lambda: self.changeFormView(app, +1))
         ]
 
+    def changeFormView(self, app, steps):
+        if 0 <= app.inFocusForm + steps <= len(app.forms)-1:
+            app.inFocusForm += steps
+
     def draw(self, app):
-        drawRect(self.x, self.y, self.w, self.h, fill=self.entry[4])
-        drawLabel(self.entry[1], self.w/2, self.h/5,
-                  size=40)
+        super().draw()
+        drawLabel(f'{app.inFocusForm+1}/{len(app.forms)}', self.w/2, 40, size=24, fill=steelGray, font='monospace')
+        drawLabel(self.entry[1], self.w/2, self.h/3, size=64, fill=steelGray, font='monospace')
         for textbox in self.textboxes:
-            textbox.draw(app)
+            textbox.draw()
         for button in self.buttons:
-            button.draw(app)
+            button.draw()
 
 class NewEntryForm(Form):
     def __init__(self, app, w, h, prevFormIndex, prevEntry=None):
@@ -223,20 +259,22 @@ class NewEntryForm(Form):
         self.textboxes = [
             Textbox(app.width/2-500/2-50, 150, 500, 50, title), # Title box
             Textbox(app.width/2-500/2-50, 230, 500, 50, username), # Username box
-            PasswordField(app.width/2-500/2-50, 310, 500, 50, password) # Password box
+            PasswordField(app.width/2-500/2-50, 310, 430, 50, password) # Password box
         ]
         # the index of the textbox currently in focus
         self.inFocusTB = 0
 
+        self.updatePasswordGen(True, True, True, True)
+
         self.buttons = [
-            Button(app.width/2+220, 310, 50, 50, '',
-                   lambda: self.textboxes[2].generatePassword(16)),
-            Button(100, 395, 100, 50, 'red', lambda: self.setColor('red')),
-            Button(230, 395, 100, 50, 'green', lambda: self.setColor('green')),
-            Button(360, 395, 100, 50, 'blue', lambda: self.setColor('blue')),
-            Button(490, 395, 100, 50, 'yellow', lambda: self.setColor('yellow')),
-            Button(app.width/2-500/2-50, 480, 120, 40, 'Cancel', lambda: self.kill(app)),
-            Button(app.width/2-500/2+90, 480, 120, 40, 'Save Entry',
+            Button(app.width/2+150, 310, 50, 50, '',
+                   lambda: self.textboxes[2].generatePassword(16, self.uppers, self.lowers, self.nums, self.specials)),
+            ActivateButton(100, 395, 100, 50, 'A-Z', lambda: (self.updatePasswordGen(uppers=not self.uppers), self.buttons[1].activate())),
+            ActivateButton(230, 395, 100, 50, 'a-z', lambda: (self.updatePasswordGen(lowers=not self.lowers), self.buttons[2].activate())),
+            ActivateButton(360, 395, 100, 50, '0-9', lambda: (self.updatePasswordGen(nums=not self.nums), self.buttons[3].activate())),
+            ActivateButton(490, 395, 100, 50, '/*+&...', lambda: (self.updatePasswordGen(specials=not self.specials), self.buttons[4].activate())),
+            Button(440, 480, 120, 40, 'Cancel', lambda: self.kill(app)),
+            Button(580, 480, 120, 40, 'Save',
                    lambda: self.saveEntry(app))
         ]
 
@@ -245,12 +283,18 @@ class NewEntryForm(Form):
         app.inFocusForm = prevFormIndex+1
         self.prevEntry = prevEntry
 
-    def draw(self, app):
-        super().draw(app, 'white')
+    def updatePasswordGen(self, uppers=None, lowers=None, nums=None, specials=None):
+        self.uppers = uppers if uppers != None else self.uppers
+        self.lowers = lowers if lowers != None else self.lowers
+        self.nums = nums if nums != None else self.nums
+        self.specials = specials if specials != None else self.specials
+
+    def draw(self):
+        super().draw(30, 'white')
         for textbox in self.textboxes:
-            textbox.draw(app)
+            textbox.draw()
         for button in self.buttons:
-            button.draw(app)
+            button.draw()
 
     def saveEntry(self, app):
         title = self.textboxes[0].text
@@ -260,10 +304,10 @@ class NewEntryForm(Form):
         if self.prevEntry:
             prevEntryID = self.prevEntry[0]
             updateEntry(prevEntryID, title, username, password, self.color)
-            loadEntries(app, self.prevFormIndex)
+            loadEntries(app, prevEntryID)
         else:
-            addEntry(title, username, password, self.color)
-            loadEntries(app, len(app.forms)-1)
+            entryID = addEntry(title, username, password, self.color)
+            loadEntries(app, entryID)
 
     def kill(self, app):
         app.inFocusForm = self.prevFormIndex
@@ -272,24 +316,23 @@ class NewEntryForm(Form):
     def setColor(self, color):
         self.color = color
 
-def loadEntries(app, focus=-1):
+def loadEntries(app, focusEntryID=0):
     app.forms = []
     entries = getEntries()
     for entry in entries:
         app.forms.append(EntryView(app, app.width, app.height, entry))
-    if focus == -1:
-        focus = len(app.forms)//2
-    app.inFocusForm = focus
+    app.forms.sort(key=lambda form: form.entry[1].lower())
+    app.inFocusForm = len(app.forms)//2
+    for i in range(len(app.forms)):
+        if app.forms[i].entry[0] == focusEntryID:
+            app.inFocusForm = i
+            break
 
 def reset(app):
     app.stepsPerSecond = 60
     app.steps = 0
     app.keyHoldSpeed = app.stepsPerSecond//8 # 8 presses a second
     app.keyHoldCounter = 0
-
-    app.ironGray = rgb(52,52,50)
-    app.steelGray = gradient(rgb(153,158,152), rgb(203,205,205),
-                            start='top-left')
 
     loadEntries(app)
 
@@ -300,7 +343,9 @@ def redrawAll(app):
     form = app.forms[app.inFocusForm]
     if type(form) == NewEntryForm:
         app.forms[app.inFocusForm-1].draw(app)
-    form.draw(app)
+        form.draw()
+    else:
+        form.draw(app)
     if type(form) == NewEntryForm \
     and 0 < app.steps % app.stepsPerSecond < app.stepsPerSecond//2:
             form.textboxes[form.inFocusTB].blinkCursor()
@@ -344,7 +389,7 @@ def onKeyPress(app, key, modifiers):
 def onMousePress(app, mouseX, mouseY):
     form = app.forms[app.inFocusForm]
     for i in range(len(form.buttons)):
-        form.buttons[i].checkMouseClick(mouseX, mouseY, app)
+        form.buttons[i].checkMouseClick(mouseX, mouseY)
     if type(form) == NewEntryForm:
         for i in range(len(form.textboxes)):
             if form.textboxes[i].checkMouseClick(mouseX, mouseY):
