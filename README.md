@@ -1,5 +1,11 @@
 # SteelPass
 
+### Todos
+- [ ] Button hover effect
+- [ ] Search box to search for entries
+- [x] Hide password fields content by default
+- [ ] Password length adjustment
+
 ### Challenges
 - ~~No way to read modifier keys (Ctrl, Shift, etc.) to allow pasting or proper tab key navigation.~~
 **Solution:** Use the 'modifiers' argument in onKeyPress.

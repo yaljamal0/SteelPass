@@ -143,6 +143,10 @@ class Textbox:
 
 # special textbox that generates passwords
 class PasswordField(Textbox):
+    def __init__(self, x, y, w, h, text='', hide=True):
+        super().__init__(x, y, w, h, text)
+        self.hide = hide
+
     def generatePassword(self, length, uppers, lowers, nums, specials):
         password = ''
         characters = ''
@@ -156,6 +160,17 @@ class PasswordField(Textbox):
         self.text = password
         self.viewIndex = 0
         self.cursorIndex = len(self.text)
+
+    def draw(self):
+        drawRect(self.x, self.y, self.w, self.h, fill=None,
+                    border=steelGray, borderWidth=2)
+        password = self.text[self.viewIndex:self.viewIndex+self.maxChars]
+        if self.hide:
+            password = '*' * len(password)
+        # start characterWidth pixels to the right after the rectangle left edge
+        drawLabel(password, self.x+characterWidth, self.y+self.h/2,
+                  align='left', fill=steelGray, size=fontSize,
+                  font='monospace')
 
 class Button:
     def __init__(self, x, y, w, h, content, action):
@@ -219,18 +234,22 @@ class EntryView(Form):
         super().__init__(app, w, h)
         self.entry = entry
         self.textboxes = [
-            Textbox(app.width/2-500/2, 380, 500, 50, entry[2]),
-            PasswordField(app.width/2-500/2, 450, 500, 50, entry[3])
+            Textbox(150, 380, 500, 50, entry[2]),
+            PasswordField(150, 450, 430, 50, entry[3])
         ]
         # the index of the textbox currently in focus
         self.inFocusTB = 0
 
         self.buttons = [
-            Button(app.width-60, 20, 40, 40, 'N', lambda: NewEntryForm(app, 0.8*app.width, 0.8*app.height, app.forms.index(self))),
-            Button(app.width-120, 20, 40, 40, 'E', lambda: NewEntryForm(app, 0.8*app.width, 0.8*app.height, app.forms.index(self), entry)),
+            Button(app.width-60, 20, 40, 40, 'N', lambda: NewEntryForm(app, 0.9*app.width, 0.9*app.height, app.forms.index(self))),
+            Button(app.width-120, 20, 40, 40, 'E', lambda: NewEntryForm(app, 0.9*app.width, 0.9*app.height, app.forms.index(self), entry)),
             Button(20, app.height/2, 40, 40, '<', lambda: self.changeFormView(app, -1)),
-            Button(app.width-60, app.height/2, 40, 40, '>', lambda: self.changeFormView(app, +1))
+            Button(app.width-60, app.height/2, 40, 40, '>', lambda: self.changeFormView(app, +1)),
+            ActivateButton(600, 450, 50, 50, 'H', lambda: (self.hidePassword(), self.buttons[4].activate()))
         ]
+
+    def hidePassword(self):
+        self.textboxes[1].hide = not self.textboxes[1].hide
 
     def changeFormView(self, app, steps):
         if 0 <= app.inFocusForm + steps <= len(app.forms)-1:
@@ -259,7 +278,7 @@ class NewEntryForm(Form):
         self.textboxes = [
             Textbox(app.width/2-500/2-50, 150, 500, 50, title), # Title box
             Textbox(app.width/2-500/2-50, 230, 500, 50, username), # Username box
-            PasswordField(app.width/2-500/2-50, 310, 430, 50, password) # Password box
+            PasswordField(app.width/2-500/2-50, 310, 430, 50, password, False) # Password box
         ]
         # the index of the textbox currently in focus
         self.inFocusTB = 0
@@ -267,7 +286,7 @@ class NewEntryForm(Form):
         self.updatePasswordGen(True, True, True, True)
 
         self.buttons = [
-            Button(app.width/2+150, 310, 50, 50, '',
+            Button(app.width/2+150, 310, 50, 50, 'G',
                    lambda: self.textboxes[2].generatePassword(16, self.uppers, self.lowers, self.nums, self.specials)),
             ActivateButton(100, 395, 100, 50, 'A-Z', lambda: (self.updatePasswordGen(uppers=not self.uppers), self.buttons[1].activate())),
             ActivateButton(230, 395, 100, 50, 'a-z', lambda: (self.updatePasswordGen(lowers=not self.lowers), self.buttons[2].activate())),
