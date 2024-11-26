@@ -3,8 +3,11 @@
 ### Todos
 - [ ] Button hover effect
 - [ ] Search box to search for entries
+- [ ] Cryptography
+- [ ] Time-based security measures
+- [ ] 2FA
+- [x] Password length adjustment
 - [x] Hide password fields content by default
-- [ ] Password length adjustment
 
 ### Challenges
 - ~~No way to read modifier keys (Ctrl, Shift, etc.) to allow pasting or proper tab key navigation.~~
