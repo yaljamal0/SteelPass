@@ -1,11 +1,12 @@
 # SteelPass
 
 ### Todos
-- [ ] Button hover effect
-- [ ] Search box to search for entries
 - [ ] Cryptography
 - [ ] Time-based security measures
 - [ ] 2FA
+- [x] Add icons for buttons instead of letters
+- [x] Search box to search for entries
+- [x] Button hover effect
 - [x] Password length adjustment
 - [x] Hide password fields content by default
 

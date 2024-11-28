@@ -10,8 +10,14 @@ from PIL import Image
 fontSize = 20
 characterWidth = (fontSize*3)//5
 ironGray = rgb(52,52,50)
-steelGray = gradient(rgb(153,158,152), rgb(203,205,205), start='top-left')
-steelImage = CMUImage(Image.open('steel.jpeg'))
+steelGray = gradient(rgb(153, 158, 152), rgb(203, 205, 205), start='top-left')
+
+steelImage = CMUImage(Image.open('assets/steel.jpeg'))
+pencilImages = (CMUImage(Image.open('assets/pencil.png')), CMUImage(Image.open('assets/steel-pencil.png')))
+trashImages = (CMUImage(Image.open('assets/trash.png')), CMUImage(Image.open('assets/steel-trash.png')))
+plusImages = (CMUImage(Image.open('assets/plus.png')), CMUImage(Image.open('assets/steel-plus.png')))
+generateImages = (CMUImage(Image.open('assets/generate.png')), CMUImage(Image.open('assets/steel-generate.png')))
+hideImages = (CMUImage(Image.open('assets/hide.png')), CMUImage(Image.open('assets/steel-hide.png')))
 
 # create a new database and table if they do not already exist
 def createDB():
@@ -58,6 +64,15 @@ def updateEntry(entryID, title, username, password):
     SET title = ?, username = ?, password = ?
     WHERE id = ?
     ''', (title, username, password, entryID))
+    conn.commit()
+    conn.close()
+
+def deleteEntry(entryID):
+    conn = sqlite3.connect('entries.db')
+    c = conn.cursor()
+    c.execute('''
+    DELETE FROM entries WHERE id = ?
+    ''', (entryID,))
     conn.commit()
     conn.close()
 
@@ -182,10 +197,12 @@ class Button:
     def draw(self):
         fill = steelGray if self.hover else None
         fontColor = 'black' if self.hover else steelGray
-
         drawRect(self.x, self.y, self.w, self.h, fill=fill,
                  border=steelGray)
-        if self.content:
+        if type(self.content) == tuple:
+            image = self.content[0] if self.hover else self.content[1]
+            drawImage(image, self.x+self.w/8, self.y+self.w/8, width=0.75*self.w, height=0.75*self.h)
+        else:
             drawLabel(self.content, self.x+self.w/2, self.y+self.h/2,
                       fill=fontColor, size=fontSize, font='monospace')
 
@@ -204,23 +221,23 @@ class Button:
 class ActivateButton(Button):
     def __init__(self, *args):
         super().__init__(*args)
-        self.fill = steelGray
-        self.fontColor = 'black'
+        self.active = True
 
     def activate(self):
-        if self.fill == None:
-            self.fill = steelGray
-            self.fontColor = 'black'
-        else:
-            self.fill = None
-            self.fontColor = steelGray
+        self.active = not self.active
 
     def draw(self):
-        drawRect(self.x, self.y, self.w, self.h, fill=self.fill,
+        fill = steelGray if self.active else None
+        fontColor = 'black' if self.active else steelGray
+        drawRect(self.x, self.y, self.w, self.h, fill=fill,
                  border=steelGray)
-        if self.content:
+        if type(self.content) == tuple:
+            image = self.content[0] if self.active else self.content[1]
+            drawImage(image, self.x+self.w/8, self.y+self.w/8, width=0.75*self.w, height=0.75*self.h)
+        else:
+            fontColor = 'black' if self.active else steelGray
             drawLabel(self.content, self.x+self.w/2, self.y+self.h/2,
-                      fill=self.fontColor, size=fontSize, font='monospace')
+                      fill=fontColor, size=fontSize, font='monospace')
 
 # a form is a view or window that houses specific elements
 class Form:
@@ -245,14 +262,15 @@ class FloatingForm(Form):
         self.inFocusTB = 0
 
         self.buttons = [
-            Button(app.width-60, 20, 40, 40, 'N', lambda: (self.buttons[0].unhover(), NewEntryForm(app, 0.9*app.width, 0.9*app.height))),
-            Button(app.width-120, 20, 40, 40, 'E', lambda: (self.buttons[0].unhover(), NewEntryForm(app, 0.9*app.width, 0.9*app.height, app.forms[app.inFocusForm].entry))),
+            Button(app.width-60, 20, 40, 40, plusImages, lambda: (self.buttons[0].unhover(), NewEntryForm(app, 0.9*app.width, 0.9*app.height))),
+            Button(app.width-120, 20, 40, 40, pencilImages, lambda: (self.buttons[1].unhover(), NewEntryForm(app, 0.9*app.width, 0.9*app.height, app.forms[app.inFocusForm].entry))),
+            Button(app.width-180, 20, 40, 40, trashImages, lambda: (self.buttons[2].unhover(), ConfirmationDialogue(app, 400, 200, lambda: app.forms[app.inFocusForm].deleteEntry(app)))),
             Button(20, app.height/2, 40, 40, '<', lambda: EntryView.changeFormView(app, -1)),
             Button(app.width-60, app.height/2, 40, 40, '>', lambda: EntryView.changeFormView(app, +1))
         ]
 
     def draw(self, app):
-        drawLabel(f'{app.inFocusForm+1}/{len(app.forms)}', self.w/2, 40, size=24, fill=steelGray, font='monospace')
+        drawLabel(f'{app.inFocusForm+1}/{len(app.forms)-int(type(app.forms[app.inFocusForm]) != EntryView)}', self.w/2, 40, size=24, fill=steelGray, font='monospace')
         for textbox in self.textboxes:
             textbox.draw()
         for button in self.buttons:
@@ -270,15 +288,27 @@ class EntryView(Form):
         self.inFocusTB = 0
 
         self.buttons = [
-            ActivateButton(600, 450, 50, 50, 'H', lambda: (self.hidePassword(), self.buttons[0].activate()))
+            ActivateButton(600, 450, 50, 50, hideImages, lambda: (self.hidePassword(), self.buttons[0].activate()))
         ]
+
+        app.forms.append(self)
 
     def hidePassword(self):
         self.textboxes[1].hide = not self.textboxes[1].hide
 
     @classmethod
     def changeFormView(self, app, steps):
-        app.inFocusForm = (app.inFocusForm+steps) % (len(app.forms))
+        app.inFocusForm = (app.inFocusForm+steps) % len(app.forms)
+
+    @classmethod
+    def searchEntries(self, app, match):
+        for i in range(len(app.forms)):
+            if app.forms[i].entry[1].lower().startswith(match.lower()):
+                app.inFocusForm = i
+
+    def deleteEntry(self, app):
+        deleteEntry(self.entry[0])
+        loadEntries(app)
 
     def draw(self):
         super().draw()
@@ -309,20 +339,17 @@ class NewEntryForm(Form):
         self.updatePasswordGen(True, True, True, True)
 
         self.buttons = [
-            Button(app.width/2+150, 310, 50, 50, 'G',
+            Button(app.width/2+150, 310, 50, 50, generateImages,
                    lambda: self.textboxes[2].generatePassword(self.textboxes[3].text, self.uppers, self.lowers, self.nums, self.specials)),
             ActivateButton(100, 395, 100, 50, 'A-Z', lambda: (self.updatePasswordGen(uppers=not self.uppers), self.buttons[1].activate())),
             ActivateButton(230, 395, 100, 50, 'a-z', lambda: (self.updatePasswordGen(lowers=not self.lowers), self.buttons[2].activate())),
             ActivateButton(360, 395, 100, 50, '0-9', lambda: (self.updatePasswordGen(nums=not self.nums), self.buttons[3].activate())),
             ActivateButton(490, 395, 100, 50, '/*+&...', lambda: (self.updatePasswordGen(specials=not self.specials), self.buttons[4].activate())),
-            Button(440, 480, 120, 40, 'Cancel', lambda: self.kill(app)),
+            Button(440, 480, 120, 40, 'Cancel', lambda: app.forms.pop(app.inFocusForm)),
             Button(580, 480, 120, 40, 'Save',
                    lambda: self.saveEntry(app))
         ]
 
-        #self.prevFormIndex = prevFormIndex
-        #app.forms.insert(prevFormIndex+1, self)
-        #app.inFocusForm = prevFormIndex+1
         app.forms.insert(app.inFocusForm, self)
         self.prevEntry = prevEntry
 
@@ -333,6 +360,7 @@ class NewEntryForm(Form):
         self.specials = specials if specials != None else self.specials
 
     def draw(self):
+        drawRect(0, 0, 800, 600, fill='black', opacity=75)
         super().draw(30, 'white')
         for textbox in self.textboxes:
             textbox.draw()
@@ -352,15 +380,30 @@ class NewEntryForm(Form):
             entryID = addEntry(title, username, password)
             loadEntries(app, entryID)
 
-    def kill(self, app):
-        #app.inFocusForm = self.prevFormIndex
-        app.forms.remove(self)
+class ConfirmationDialogue(Form):
+    def __init__(self, app, w, h, action):
+        super().__init__(app, w, h)
+
+        self.buttons = [
+            Button(290, 320, 100, 40, 'No', lambda: app.forms.pop(app.inFocusForm)),
+            Button(410, 320, 100, 40, 'Yes', lambda: (app.forms.pop(app.inFocusForm), action()))
+        ]
+
+        app.forms.insert(app.inFocusForm, self)
+
+    def draw(self):
+        drawRect(0, 0, 800, 600, fill='black', opacity=75)
+        super().draw(30, 'white')
+        drawLabel('Are you sure?', 400, 270, fill=steelGray, size=26,
+                  font='monospace')
+        for button in self.buttons:
+            button.draw()
 
 def loadEntries(app, focusEntryID=0):
     app.forms = []
     entries = getEntries()
     for entry in entries:
-        app.forms.append(EntryView(app, app.width, app.height, entry))
+        EntryView(app, app.width, app.height, entry)
     app.forms.sort(key=lambda form: form.entry[1].lower())
     app.inFocusForm = len(app.forms)//2
     for i in range(len(app.forms)):
@@ -368,9 +411,7 @@ def loadEntries(app, focusEntryID=0):
             app.inFocusForm = i
             break
     if not app.forms:
-        app.forms.append(
-            EntryView(app, app.width, app.height, (-1, 'Welcome!', 'Click the + to add your first entry...', 'Enjoy :)'))
-        )
+        EntryView(app, app.width, app.height, (-1, 'Welcome!', 'Click the + to add your first entry...', 'Enjoy :)'))
 
 def reset(app):
     app.stepsPerSecond = 60
@@ -387,7 +428,7 @@ def onAppStart(app):
 
 def redrawAll(app):
     form = app.forms[app.inFocusForm]
-    if type(form) == NewEntryForm:
+    if type(form) != EntryView:
         app.forms[app.inFocusForm+1].draw()
         app.floatingForm.draw(app)
         form.draw()
@@ -407,6 +448,8 @@ def onStep(app):
 
 def onKeyHold(app, keys):
     form = app.forms[app.inFocusForm]
+    if type(form) == ConfirmationDialogue:
+        return
     if type(form) == EntryView:
         form = app.floatingForm
     if app.keyHoldCounter == 0:
@@ -420,6 +463,8 @@ def onKeyHold(app, keys):
 
 def onKeyPress(app, key, modifiers):
     form = app.forms[app.inFocusForm]
+    if type(form) == ConfirmationDialogue:
+        return
     if type(form) == EntryView:
         if key == 'right':
             EntryView.changeFormView(app, 1)
@@ -437,6 +482,8 @@ def onKeyPress(app, key, modifiers):
         form.textboxes[form.inFocusTB].write(' ')
     elif key in string.printable:
         form.textboxes[form.inFocusTB].write(key)
+        if type(form) == FloatingForm:
+            EntryView.searchEntries(app, form.textboxes[form.inFocusTB].text)
 
 def onMousePress(app, mouseX, mouseY):
     form = app.forms[app.inFocusForm]
@@ -446,7 +493,7 @@ def onMousePress(app, mouseX, mouseY):
         for i in range(len(form.textboxes)):
             if form.textboxes[i].checkMouseClick(mouseX, mouseY):
                 form.inFocusTB = i
-    else:
+    elif type(form) == EntryView:
         for button in app.floatingForm.buttons:
             button.checkMouseClick(mouseX, mouseY)
         for textbox in app.floatingForm.textboxes:
@@ -456,7 +503,7 @@ def onMouseMove(app, mouseX, mouseY):
     form = app.forms[app.inFocusForm]
     for button in form.buttons:
         button.hover = button.checkBounds(mouseX, mouseY)
-    if type(form) != NewEntryForm:
+    if type(form) == EntryView:
         for button in app.floatingForm.buttons:
             button.hover = button.checkBounds(mouseX, mouseY)
 
