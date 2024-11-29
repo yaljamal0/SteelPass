@@ -1,7 +1,6 @@
 from cmu_graphics import *
 import time
 import string
-import os
 import random
 import sqlite3
 from PIL import Image
@@ -10,6 +9,7 @@ from Crypto.Random import get_random_bytes
 from Crypto.Util.Padding import pad, unpad
 from Crypto.Hash import SHA256
 import base64
+import pyperclip
 
 # global styling constants
 fontSize = 20
@@ -28,6 +28,8 @@ generateImages = (CMUImage(Image.open('assets/generate.png')),
                   CMUImage(Image.open('assets/steel-generate.png')))
 hideImages = (CMUImage(Image.open('assets/hide.png')),
               CMUImage(Image.open('assets/steel-hide.png')))
+copyImages = (CMUImage(Image.open('assets/copy.png')),
+              CMUImage(Image.open('assets/steel-copy.png')))
 
 def encrypt(key, data):
     # hash the key to get a fixed length of 32 bytes for AES
@@ -217,8 +219,9 @@ class Textbox:
                         self.text[self.cursorIndex:]
         self.shiftCursor(-1)
 
-    def copyToClipboard(self):
-        os.system(f'echo -n {self.text} | xsel --clipboard')
+    def copyToClipboard(self, app):
+        pyperclip.copy(self.text)
+        app.clipboardCounter = app.clipboardTime
 
 # special textbox that generates passwords
 class PasswordField(Textbox):
@@ -363,18 +366,22 @@ class EntryView(Form):
         super().__init__(app, w, h)
         self.entry = entry
         self.textboxes = [
-            Textbox(150, 380, 500, 50, entry[2]),
-            PasswordField(150, 450, 430, 50, entry[3])
+            Textbox(150, 380, 430, 50, entry[2]),
+            PasswordField(150, 450, 360, 50, entry[3])
         ]
         # the index of the textbox currently in focus
         self.inFocusTB = 0
 
         self.buttons = [
-            ActivateButton(600, 450, 50, 50, hideImages,
+            ActivateButton(530, 450, 50, 50, hideImages,
                 lambda: (
                     self.hidePassword(),
                     self.buttons[0].activate()
-                ))
+                )),
+            Button(600, 380, 50, 50, copyImages,
+                   lambda: self.textboxes[0].copyToClipboard(app)),
+            Button(600, 450, 50, 50, copyImages,
+                   lambda: self.textboxes[1].copyToClipboard(app))
         ]
 
         app.forms.append(self)
@@ -579,6 +586,10 @@ def reset(app):
     app.steps = 0
     app.keyHoldSpeed = app.stepsPerSecond//8 # 8 presses a second
     app.keyHoldCounter = 0
+    app.clipboardTime = 10 # 10 seconds
+    app.clipboardCounter = 0
+    app.idleTime = 60 # 1 minute (annoying but good for demonstration)
+    app.idleCounter = app.idleTime
 
     app.masterKey = ''
     app.forms = [UnlockForm(app, app.width, app.height)]
@@ -603,11 +614,24 @@ def redrawAll(app):
             form.textboxes[form.inFocusTB].blinkCursor()
         else:
             app.floatingForm.textboxes[0].blinkCursor()
+    if app.clipboardCounter:
+        drawLabel(f'Clearing the clipboard in {app.clipboardCounter} seconds...',
+                  app.width/2, app.height*0.93, fill=steelGray, size=fontSize,
+                  font='monospace')
 
 def onStep(app):
     app.steps += 1
     if app.keyHoldCounter:
         app.keyHoldCounter -= 1
+    if app.steps % 60 == 0:
+        if app.clipboardCounter:
+            app.clipboardCounter -= 1
+            if app.clipboardCounter == 0:
+                pyperclip.copy('')
+        app.idleCounter -= 1
+        if app.idleCounter == 0:
+            reset(app)
+    
 
 def onKeyHold(app, keys):
     form = app.forms[app.inFocusForm]
@@ -625,6 +649,7 @@ def onKeyHold(app, keys):
         app.keyHoldCounter = app.keyHoldSpeed
 
 def onKeyPress(app, key, modifiers):
+    app.idleCounter = app.idleTime
     form = app.forms[app.inFocusForm]
     if type(form) == ConfirmationDialogue:
         return
@@ -634,6 +659,9 @@ def onKeyPress(app, key, modifiers):
         if key == 'left':
             EntryView.changeFormView(app, -1)
         form = app.floatingForm
+    if type(form) == UnlockForm:
+        if key == 'enter':
+            form.unlock(app)
     if key == 'backspace':
             app.keyHoldCounter = 0
     elif key == 'tab':
@@ -649,6 +677,7 @@ def onKeyPress(app, key, modifiers):
             EntryView.searchEntries(app, form.textboxes[form.inFocusTB].text)
 
 def onMousePress(app, mouseX, mouseY):
+    app.idleCounter = app.idleTime
     form = app.forms[app.inFocusForm]
     for button in form.buttons:
         button.checkMouseClick(mouseX, mouseY)

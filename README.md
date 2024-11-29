@@ -1,8 +1,9 @@
 # SteelPass
 
 ### Todos
-- [ ] Time-based security measures
 - [ ] 2FA
+- [x] Copy entries support
+- [x] Time-based security measures
 - [x] Cryptography
 - [x] Add icons for buttons instead of letters
 - [x] Search box to search for entries
