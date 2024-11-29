@@ -5,19 +5,64 @@ import os
 import random
 import sqlite3
 from PIL import Image
+from Crypto.Cipher import AES
+from Crypto.Random import get_random_bytes
+from Crypto.Util.Padding import pad, unpad
+from Crypto.Hash import SHA256
+import base64
 
-# global constants
+# global styling constants
 fontSize = 20
 characterWidth = (fontSize*3)//5
-ironGray = rgb(52,52,50)
 steelGray = gradient(rgb(153, 158, 152), rgb(203, 205, 205), start='top-left')
 
+# global background and button icons
 steelImage = CMUImage(Image.open('assets/steel.jpeg'))
-pencilImages = (CMUImage(Image.open('assets/pencil.png')), CMUImage(Image.open('assets/steel-pencil.png')))
-trashImages = (CMUImage(Image.open('assets/trash.png')), CMUImage(Image.open('assets/steel-trash.png')))
-plusImages = (CMUImage(Image.open('assets/plus.png')), CMUImage(Image.open('assets/steel-plus.png')))
-generateImages = (CMUImage(Image.open('assets/generate.png')), CMUImage(Image.open('assets/steel-generate.png')))
-hideImages = (CMUImage(Image.open('assets/hide.png')), CMUImage(Image.open('assets/steel-hide.png')))
+pencilImages = (CMUImage(Image.open('assets/pencil.png')),
+                CMUImage(Image.open('assets/steel-pencil.png')))
+trashImages = (CMUImage(Image.open('assets/trash.png')),
+               CMUImage(Image.open('assets/steel-trash.png')))
+plusImages = (CMUImage(Image.open('assets/plus.png')),
+              CMUImage(Image.open('assets/steel-plus.png')))
+generateImages = (CMUImage(Image.open('assets/generate.png')),
+                  CMUImage(Image.open('assets/steel-generate.png')))
+hideImages = (CMUImage(Image.open('assets/hide.png')),
+              CMUImage(Image.open('assets/steel-hide.png')))
+
+def encrypt(key, data):
+    # hash the key to get a fixed length of 32 bytes for AES
+    key = SHA256.new(key.encode('utf-8')).digest()
+    # generate a random 16-byte IV
+    iv = get_random_bytes(16)
+    # create the cipher object
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    # pad the message to be a multiple of AES block size (16 bytes)
+    paddedData = pad(data.encode('utf-8'), AES.block_size)
+    # encrypt the padded message
+    ciphertext = cipher.encrypt(paddedData)
+    # combine the IV and ciphertext and encode them in base64
+    encryptedData = base64.b64encode(iv + ciphertext).decode('utf-8')
+
+    return encryptedData
+
+def decrypt(key, data):
+    try:
+        # decode base64 encoding
+        encryptedData = base64.b64decode(data)
+        # get IV (first 16 bytes) and ciphertext (remaining bytes)
+        iv = encryptedData[:16]
+        ciphertext = encryptedData[16:]
+        # hash the key to get a fixed length of 32 bytes for AES
+        key = SHA256.new(key.encode('utf-8')).digest()
+        # create the cipher object
+        cipher = AES.new(key, AES.MODE_CBC, iv)
+        # decrypt the ciphertext and remove padding
+        decryptedData = unpad(cipher.decrypt(ciphertext), AES.block_size)
+
+        return decryptedData.decode('utf-8')
+    except:
+        # either the key is invalid or the data is corrupt
+        return False
 
 # create a new database and table if they do not already exist
 def createDB():
@@ -35,16 +80,30 @@ def createDB():
     conn.close()
 
 # get all entries from table
-def getEntries():
+def getEntries(masterKey):
     conn = sqlite3.connect('entries.db')
     c = conn.cursor()
     c.execute('SELECT * FROM entries')
     entries = c.fetchall()
     conn.close()
+    if not entries:
+        return None
+    if decrypt(masterKey, entries[0][1]) == False:
+        return False
+    for i in range(len(entries)):
+        entries[i] = (
+            entries[i][0],
+            decrypt(masterKey, entries[i][1]),
+            decrypt(masterKey, entries[i][2]),
+            decrypt(masterKey, entries[i][3])
+        )
     return entries
 
 # add entry to table
-def addEntry(title, username, password):
+def addEntry(title, username, password, masterKey):
+    title = encrypt(masterKey, title)
+    username = encrypt(masterKey, username)
+    password = encrypt(masterKey, password)
     conn = sqlite3.connect('entries.db')
     c = conn.cursor()
     c.execute('''
@@ -56,7 +115,10 @@ def addEntry(title, username, password):
     return c.lastrowid
 
 # update an entry if it has the same title
-def updateEntry(entryID, title, username, password):
+def updateEntry(entryID, title, username, password, masterKey):
+    title = encrypt(masterKey, title)
+    username = encrypt(masterKey, username)
+    password = encrypt(masterKey, password)
     conn = sqlite3.connect('entries.db')
     c = conn.cursor()
     c.execute('''
@@ -190,8 +252,6 @@ class Button:
         self.content = content
         # callback function that the button will run on click
         self.action = action
-        #self.fill = steelGray if active else None
-        #self.fontColor = 'black' if active else steelGray
         self.hover = hover
 
     def draw(self):
@@ -201,7 +261,8 @@ class Button:
                  border=steelGray)
         if type(self.content) == tuple:
             image = self.content[0] if self.hover else self.content[1]
-            drawImage(image, self.x+self.w/8, self.y+self.w/8, width=0.75*self.w, height=0.75*self.h)
+            drawImage(image, self.x+self.w/8, self.y+self.w/8,
+                      width=0.75*self.w, height=0.75*self.h)
         else:
             drawLabel(self.content, self.x+self.w/2, self.y+self.h/2,
                       fill=fontColor, size=fontSize, font='monospace')
@@ -233,7 +294,8 @@ class ActivateButton(Button):
                  border=steelGray)
         if type(self.content) == tuple:
             image = self.content[0] if self.active else self.content[1]
-            drawImage(image, self.x+self.w/8, self.y+self.w/8, width=0.75*self.w, height=0.75*self.h)
+            drawImage(image, self.x+self.w/8, self.y+self.w/8,
+                      width=0.75*self.w, height=0.75*self.h)
         else:
             fontColor = 'black' if self.active else steelGray
             drawLabel(self.content, self.x+self.w/2, self.y+self.h/2,
@@ -250,7 +312,8 @@ class Form:
 
     def draw(self, opacity=10, border=None):
         drawRect(self.x, self.y, self.w, self.h, fill='black')
-        drawImage(steelImage, self.x, self.y, width=self.w, height=self.h, opacity=opacity, border=border)
+        drawImage(steelImage, self.x, self.y, width=self.w, height=self.h,
+                  opacity=opacity, border=border)
 
 class FloatingForm(Form):
     def __init__(self, app, w, h):
@@ -262,15 +325,34 @@ class FloatingForm(Form):
         self.inFocusTB = 0
 
         self.buttons = [
-            Button(app.width-60, 20, 40, 40, plusImages, lambda: (self.buttons[0].unhover(), NewEntryForm(app, 0.9*app.width, 0.9*app.height))),
-            Button(app.width-120, 20, 40, 40, pencilImages, lambda: (self.buttons[1].unhover(), NewEntryForm(app, 0.9*app.width, 0.9*app.height, app.forms[app.inFocusForm].entry))),
-            Button(app.width-180, 20, 40, 40, trashImages, lambda: (self.buttons[2].unhover(), ConfirmationDialogue(app, 400, 200, lambda: app.forms[app.inFocusForm].deleteEntry(app)))),
-            Button(20, app.height/2, 40, 40, '<', lambda: EntryView.changeFormView(app, -1)),
-            Button(app.width-60, app.height/2, 40, 40, '>', lambda: EntryView.changeFormView(app, +1))
+            Button(app.width-60, 20, 40, 40, plusImages,
+                lambda: (
+                    self.buttons[0].unhover(),
+                    NewEntryForm(app, 0.9*app.width, 0.9*app.height)
+                )),
+            Button(app.width-120, 20, 40, 40, pencilImages,
+                lambda: (
+                    self.buttons[1].unhover(),
+                    NewEntryForm(app, 0.9*app.width, 0.9*app.height,
+                                app.forms[app.inFocusForm].entry)
+                )),
+            Button(app.width-180, 20, 40, 40, trashImages,
+                lambda: (
+                    self.buttons[2].unhover(),
+                    ConfirmationDialogue(app, 400, 200,
+                        lambda: app.forms[app.inFocusForm].deleteEntry(app))
+                )),
+            Button(20, app.height/2, 40, 40, '<',
+                   lambda: EntryView.changeFormView(app, -1)),
+            Button(app.width-60, app.height/2, 40, 40, '>',
+                   lambda: EntryView.changeFormView(app, +1))
         ]
 
     def draw(self, app):
-        drawLabel(f'{app.inFocusForm+1}/{len(app.forms)-int(type(app.forms[app.inFocusForm]) != EntryView)}', self.w/2, 40, size=24, fill=steelGray, font='monospace')
+        totalEntries = \
+            len(app.forms) - int(type(app.forms[app.inFocusForm]) != EntryView)
+        drawLabel(f'{app.inFocusForm+1}/{totalEntries}', self.w/2, 40, size=24,
+                  fill=steelGray, font='monospace')
         for textbox in self.textboxes:
             textbox.draw()
         for button in self.buttons:
@@ -288,7 +370,11 @@ class EntryView(Form):
         self.inFocusTB = 0
 
         self.buttons = [
-            ActivateButton(600, 450, 50, 50, hideImages, lambda: (self.hidePassword(), self.buttons[0].activate()))
+            ActivateButton(600, 450, 50, 50, hideImages,
+                lambda: (
+                    self.hidePassword(),
+                    self.buttons[0].activate()
+                ))
         ]
 
         app.forms.append(self)
@@ -312,7 +398,8 @@ class EntryView(Form):
 
     def draw(self):
         super().draw()
-        drawLabel(self.entry[1], self.w/2, self.h/3, size=64, fill=steelGray, font='monospace')
+        drawLabel(self.entry[1], self.w/2, self.h/3, size=64, fill=steelGray,
+                  font='monospace')
         for textbox in self.textboxes:
             textbox.draw()
         for button in self.buttons:
@@ -328,10 +415,11 @@ class NewEntryForm(Form):
             title, username, password = '', '', ''
 
         self.textboxes = [
-            Textbox(app.width/2-500/2-50, 150, 500, 50, title, 'Title'), # Title box
-            Textbox(app.width/2-500/2-50, 230, 500, 50, username, 'Username'), # Username box
-            PasswordField(app.width/2-500/2-50, 310, 430, 50, password, 'Password', False), # Password box
-            Textbox(620, 310, 50, 50, '16')
+            Textbox(app.width/2-500/2-50, 150, 500, 50, title, 'Title'),
+            Textbox(app.width/2-500/2-50, 230, 500, 50, username, 'Username'),
+            PasswordField(app.width/2-500/2-50, 310, 430, 50, password,
+                          'Password', False),
+            Textbox(620, 310, 50, 50, '16') # password length textbox
         ]
         # the index of the textbox currently in focus
         self.inFocusTB = 0
@@ -340,12 +428,31 @@ class NewEntryForm(Form):
 
         self.buttons = [
             Button(app.width/2+150, 310, 50, 50, generateImages,
-                   lambda: self.textboxes[2].generatePassword(self.textboxes[3].text, self.uppers, self.lowers, self.nums, self.specials)),
-            ActivateButton(100, 395, 100, 50, 'A-Z', lambda: (self.updatePasswordGen(uppers=not self.uppers), self.buttons[1].activate())),
-            ActivateButton(230, 395, 100, 50, 'a-z', lambda: (self.updatePasswordGen(lowers=not self.lowers), self.buttons[2].activate())),
-            ActivateButton(360, 395, 100, 50, '0-9', lambda: (self.updatePasswordGen(nums=not self.nums), self.buttons[3].activate())),
-            ActivateButton(490, 395, 100, 50, '/*+&...', lambda: (self.updatePasswordGen(specials=not self.specials), self.buttons[4].activate())),
-            Button(440, 480, 120, 40, 'Cancel', lambda: app.forms.pop(app.inFocusForm)),
+                   lambda: self.textboxes[2].generatePassword(
+                    self.textboxes[3].text, self.uppers, self.lowers, self.nums,
+                    self.specials)),
+            ActivateButton(100, 395, 100, 50, 'A-Z',
+                lambda: (
+                    self.updatePasswordGen(uppers=not self.uppers),
+                    self.buttons[1].activate()
+                )),
+            ActivateButton(230, 395, 100, 50, 'a-z',
+                lambda: (
+                    self.updatePasswordGen(lowers=not self.lowers),
+                    self.buttons[2].activate()
+                )),
+            ActivateButton(360, 395, 100, 50, '0-9',
+                lambda: (
+                    self.updatePasswordGen(nums=not self.nums),
+                    self.buttons[3].activate()
+                )),
+            ActivateButton(490, 395, 100, 50, '/*+&...',
+                lambda: (
+                    self.updatePasswordGen(specials=not self.specials),
+                    self.buttons[4].activate()
+                )),
+            Button(440, 480, 120, 40, 'Cancel',
+                   lambda: app.forms.pop(app.inFocusForm)),
             Button(580, 480, 120, 40, 'Save',
                    lambda: self.saveEntry(app))
         ]
@@ -353,7 +460,8 @@ class NewEntryForm(Form):
         app.forms.insert(app.inFocusForm, self)
         self.prevEntry = prevEntry
 
-    def updatePasswordGen(self, uppers=None, lowers=None, nums=None, specials=None):
+    def updatePasswordGen(self, uppers=None, lowers=None, nums=None,
+                          specials=None):
         self.uppers = uppers if uppers != None else self.uppers
         self.lowers = lowers if lowers != None else self.lowers
         self.nums = nums if nums != None else self.nums
@@ -374,10 +482,10 @@ class NewEntryForm(Form):
 
         if self.prevEntry:
             prevEntryID = self.prevEntry[0]
-            updateEntry(prevEntryID, title, username, password)
+            updateEntry(prevEntryID, title, username, password, app.masterKey)
             loadEntries(app, prevEntryID)
         else:
-            entryID = addEntry(title, username, password)
+            entryID = addEntry(title, username, password, app.masterKey)
             loadEntries(app, entryID)
 
 class ConfirmationDialogue(Form):
@@ -385,8 +493,13 @@ class ConfirmationDialogue(Form):
         super().__init__(app, w, h)
 
         self.buttons = [
-            Button(290, 320, 100, 40, 'No', lambda: app.forms.pop(app.inFocusForm)),
-            Button(410, 320, 100, 40, 'Yes', lambda: (app.forms.pop(app.inFocusForm), action()))
+            Button(290, 320, 100, 40, 'No',
+                   lambda: app.forms.pop(app.inFocusForm)),
+            Button(410, 320, 100, 40, 'Yes',
+                lambda: (
+                    app.forms.pop(app.inFocusForm),
+                    action()
+                ))
         ]
 
         app.forms.insert(app.inFocusForm, self)
@@ -399,19 +512,67 @@ class ConfirmationDialogue(Form):
         for button in self.buttons:
             button.draw()
 
+class UnlockForm(Form):
+    def __init__(self, app, w, h):
+        super().__init__(app, w, h)
+
+        self.firstUse = True if getEntries('') == None else False
+        buttonContent = 'Start' if self.firstUse else 'Unlock'
+
+        self.buttons = [
+            Button(app.width/2-100/2, 355, 100, 40, buttonContent,
+                   lambda: self.unlock(app)),
+            ActivateButton(600, 275, 50, 50, hideImages,
+                lambda: (
+                    self.hidePassword(),
+                    self.buttons[1].activate()
+                ))
+        ]
+
+        self.textboxes = [
+            PasswordField(app.width/2-500/2, app.height/2-50/2, 430, 50)
+        ]
+        self.inFocusTB = 0
+
+    def unlock(self, app):
+        app.masterKey = self.textboxes[0].text
+        loadEntries(app)
+
+    def hidePassword(self):
+        self.textboxes[0].hide = not self.textboxes[0].hide
+
+    def draw(self):
+        super().draw()
+        if self.firstUse:
+            message = 'Create a secure master password'
+        else:
+            message = 'Enter your master password'
+        drawLabel(message, 400, 225, fill=steelGray, size=26,
+                  font='monospace')
+        for button in self.buttons:
+            button.draw()
+        for textbox in self.textboxes:
+            textbox.draw()
+
 def loadEntries(app, focusEntryID=0):
     app.forms = []
-    entries = getEntries()
-    for entry in entries:
-        EntryView(app, app.width, app.height, entry)
-    app.forms.sort(key=lambda form: form.entry[1].lower())
-    app.inFocusForm = len(app.forms)//2
-    for i in range(len(app.forms)):
-        if app.forms[i].entry[0] == focusEntryID:
-            app.inFocusForm = i
-            break
-    if not app.forms:
-        EntryView(app, app.width, app.height, (-1, 'Welcome!', 'Click the + to add your first entry...', 'Enjoy :)'))
+    entries = getEntries(app.masterKey)
+    if entries == False:
+        reset(app)
+        return
+    elif entries == None:
+        EntryView(app, app.width, app.height, (-1, 'Welcome!',
+                  'Click the + to add your first entry...', 'Enjoy :)'))
+    else:
+        for entry in entries:
+            EntryView(app, app.width, app.height, entry)
+        app.forms.sort(key=lambda form: form.entry[1].lower())
+        app.inFocusForm = len(app.forms)//2
+        for i in range(len(app.forms)):
+            if app.forms[i].entry[0] == focusEntryID:
+                app.inFocusForm = i
+                break
+    app.floatingForm = FloatingForm(app, app.width, app.height)
 
 def reset(app):
     app.stepsPerSecond = 60
@@ -419,24 +580,26 @@ def reset(app):
     app.keyHoldSpeed = app.stepsPerSecond//8 # 8 presses a second
     app.keyHoldCounter = 0
 
-    loadEntries(app)
-
-    app.floatingForm = FloatingForm(app, app.width, app.height)
+    app.masterKey = ''
+    app.forms = [UnlockForm(app, app.width, app.height)]
+    app.inFocusForm = 0
 
 def onAppStart(app):
     reset(app)
 
 def redrawAll(app):
     form = app.forms[app.inFocusForm]
-    if type(form) != EntryView:
+    if type(form) == EntryView:
+        form.draw()
+        app.floatingForm.draw(app)
+    elif type(form) == UnlockForm:
+        form.draw()
+    else:
         app.forms[app.inFocusForm+1].draw()
         app.floatingForm.draw(app)
         form.draw()
-    else:
-        form.draw()
-        app.floatingForm.draw(app)
     if 0 < app.steps % app.stepsPerSecond < app.stepsPerSecond//2:
-        if type(form) == NewEntryForm:
+        if type(form) in [NewEntryForm, UnlockForm]:
             form.textboxes[form.inFocusTB].blinkCursor()
         else:
             app.floatingForm.textboxes[0].blinkCursor()

@@ -1,9 +1,9 @@
 # SteelPass
 
 ### Todos
-- [ ] Cryptography
 - [ ] Time-based security measures
 - [ ] 2FA
+- [x] Cryptography
 - [x] Add icons for buttons instead of letters
 - [x] Search box to search for entries
 - [x] Button hover effect
