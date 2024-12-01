@@ -1,7 +1,7 @@
 # SteelPass
 
 ### Todos
-- [ ] 2FA
+- [x] 2FA (Time-based One-Time Password)
 - [x] Copy entries support
 - [x] Time-based security measures
 - [x] Cryptography

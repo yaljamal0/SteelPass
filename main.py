@@ -73,25 +73,28 @@ def decrypt(key, data):
         # either the key is invalid or the data is corrupt
         return False
 
-def generateTotp(seed):
-    seed = seed.replace(' ', '')
-    seed = seed.upper()
-    # get the current 30-second period
-    currentTime = int(time.time() // 30)
-    # decode the Base32 seed to bytes
-    seed = base64.b32decode(seed)
-    # pack current time into an 8-byte big-endian value
-    timeBytes = struct.pack(">Q", currentTime)
-    # use HMAC-SHA1 to hash the time with the seed
-    hmacHash = hmac.new(seed, timeBytes, hashlib.sha1).digest()
-    # extract a 4-byte segment from the hash
-    offset = hmacHash[-1] & 0x0F
-    # 31 bits to avoid negatives
-    code = struct.unpack(">I", hmacHash[offset:offset+4])[0] & 0x7FFFFFFF
-    # reduce to 6 digits
-    otp = code % (10 ** 6)
-    
-    return str(otp).zfill(6)
+def generateTOTP(seed):
+    try:
+        seed = seed.replace(' ', '')
+        seed = seed.upper()
+        # get the current 30-second period
+        currentTime = int(time.time() // 30)
+        # decode the Base32 seed to bytes
+        seed = base64.b32decode(seed)
+        # pack current time into an 8-byte big-endian value
+        timeBytes = struct.pack(">Q", currentTime)
+        # use HMAC-SHA1 to hash the time with the seed
+        hmacHash = hmac.new(seed, timeBytes, hashlib.sha1).digest()
+        # extract a 4-byte segment from the hash
+        offset = hmacHash[-1] & 0x0F
+        # 31 bits to avoid negatives
+        code = struct.unpack(">I", hmacHash[offset:offset+4])[0] & 0x7FFFFFFF
+        # reduce to 6 digits
+        otp = code % (10 ** 6)
+
+        return str(otp).zfill(6)
+    except:
+        return 'Unrecognizable seed format'
 
 # create a new database and table if they do not already exist
 def createDB():
@@ -102,7 +105,8 @@ def createDB():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT,
             username TEXT,
-            password TEXT
+            password TEXT,
+            seed TEXT
         )
     ''')
     conn.commit()
@@ -124,37 +128,42 @@ def getEntries(masterKey):
             entries[i][0],
             decrypt(masterKey, entries[i][1]),
             decrypt(masterKey, entries[i][2]),
-            decrypt(masterKey, entries[i][3])
+            decrypt(masterKey, entries[i][3]),
+            decrypt(masterKey, entries[i][4])
         )
     return entries
 
 # add entry to table
-def addEntry(title, username, password, masterKey):
+def addEntry(title, username, password, seed, masterKey):
     title = encrypt(masterKey, title)
     username = encrypt(masterKey, username)
     password = encrypt(masterKey, password)
+    seed = encrypt(masterKey, seed)
+
     conn = sqlite3.connect('entries.db')
     c = conn.cursor()
     c.execute('''
-        INSERT INTO entries (title, username, password)
-        VALUES (?, ?, ?)
-    ''', (title, username, password))
+        INSERT INTO entries (title, username, password, seed)
+        VALUES (?, ?, ?, ?)
+    ''', (title, username, password, seed))
     conn.commit()
     conn.close()
     return c.lastrowid
 
 # update an entry if it has the same title
-def updateEntry(entryID, title, username, password, masterKey):
+def updateEntry(entryID, title, username, password, seed, masterKey):
     title = encrypt(masterKey, title)
     username = encrypt(masterKey, username)
     password = encrypt(masterKey, password)
+    seed = encrypt(masterKey, seed)
+
     conn = sqlite3.connect('entries.db')
     c = conn.cursor()
     c.execute('''
     UPDATE entries
-    SET title = ?, username = ?, password = ?
+    SET title = ?, username = ?, password = ?, seed = ?
     WHERE id = ?
-    ''', (title, username, password, entryID))
+    ''', (title, username, password, seed, entryID))
     conn.commit()
     conn.close()
 
@@ -184,7 +193,7 @@ class Textbox:
         # index of first character of the viewable part of the entered text
         self.viewIndex = 0
         # index of the blinking cursor that controls the view
-        self.cursorIndex = len(text)
+        self.cursorIndex = min(len(text), self.maxChars)
 
     def draw(self):
         drawRect(self.x, self.y, self.w, self.h, fill=None,
@@ -237,7 +246,7 @@ class Textbox:
         # insert at cursor location
         self.text = self.text[:self.cursorIndex] + data + \
                     self.text[self.cursorIndex:]
-        self.shiftCursor(1)
+        self.shiftCursor(len(data))
 
     def erase(self):
         # erase behind cursor location
@@ -399,22 +408,26 @@ class EntryView(Form):
         super().__init__(app, w, h)
         self.entry = entry
         self.textboxes = [
-            Textbox(150, 380, 430, 50, entry[2]),
-            PasswordField(150, 450, 360, 50, entry[3])
+            Textbox(150, 330, 430, 50, entry[2], 'No username'),
+            PasswordField(150, 400, 360, 50, entry[3], 'No password'),
+            PasswordField(150, 470, 430, 50,  generateTOTP(entry[4]),
+                          '2FA is not enabled for this entry', hide=False)
         ]
         # the index of the textbox currently in focus
         self.inFocusTB = 0
 
         self.buttons = [
-            ActivateButton(530, 450, 50, 50, hideImages,
+            ActivateButton(530, 400, 50, 50, hideImages,
                 lambda: (
                     self.hidePassword(),
                     self.buttons[0].activate()
                 )),
-            Button(600, 380, 50, 50, copyImages,
+            Button(600, 330, 50, 50, copyImages,
                    lambda: self.textboxes[0].copyToClipboard(app)),
-            Button(600, 450, 50, 50, copyImages,
-                   lambda: self.textboxes[1].copyToClipboard(app))
+            Button(600, 400, 50, 50, copyImages,
+                   lambda: self.textboxes[1].copyToClipboard(app)),
+            Button(600, 470, 50, 50, copyImages,
+                   lambda: self.textboxes[2].copyToClipboard(app))
         ]
 
         app.forms.append(self)
@@ -451,16 +464,19 @@ class NewEntryForm(Form):
         super().__init__(app, w, h)
 
         if prevEntry:
-            title, username, password = prevEntry[1], prevEntry[2], prevEntry[3]
+            title, username, password, seed = prevEntry[1], prevEntry[2],\
+                                        prevEntry[3], prevEntry[4]
         else:
-            title, username, password = '', '', ''
+            title, username, password, seed = '', '', '', ''
 
         self.textboxes = [
-            Textbox(app.width/2-500/2-50, 100, 500, 50, title, 'Title'),
-            Textbox(app.width/2-500/2-50, 180, 500, 50, username, 'Username'),
+            Textbox(app.width/2-500/2-50, 100, 570, 50, title, 'Title'),
+            Textbox(app.width/2-500/2-50, 180, 570, 50, username, 'Username'),
             PasswordField(app.width/2-500/2-50, 260, 430, 50, password,
                           'Password', False),
-            Textbox(620, 260, 50, 50, '16') # password length textbox
+            Textbox(620, 260, 50, 50, '16'), # password length textbox
+            PasswordField(app.width/2-500/2-50, 400, 570, 50, seed,
+                          '2FA Seed', False)
         ]
         # the index of the textbox currently in focus
         self.inFocusTB = 0
@@ -472,34 +488,34 @@ class NewEntryForm(Form):
                    lambda: self.textboxes[2].generatePassword(
                     self.textboxes[3].text, self.uppers, self.lowers, self.nums,
                     self.specials, self.passphrase)),
-            ActivateButton(100, 345, 100, 50, 'A-Z',
+            ActivateButton(100, 330, 80, 50, 'A-Z',
                 lambda: (
                     self.updatePasswordGen(uppers=not self.uppers),
                     self.buttons[1].activate()
                 )),
-            ActivateButton(230, 345, 100, 50, 'a-z',
+            ActivateButton(200, 330, 80, 50, 'a-z',
                 lambda: (
                     self.updatePasswordGen(lowers=not self.lowers),
                     self.buttons[2].activate()
                 )),
-            ActivateButton(360, 345, 100, 50, '0-9',
+            ActivateButton(300, 330, 80, 50, '0-9',
                 lambda: (
                     self.updatePasswordGen(nums=not self.nums),
                     self.buttons[3].activate()
                 )),
-            ActivateButton(490, 345, 100, 50, '/*+&...',
+            ActivateButton(400, 330, 100, 50, '/*+&...',
                 lambda: (
                     self.updatePasswordGen(specials=not self.specials),
                     self.buttons[4].activate()
                 )),
-            ActivateButton(100, 415, 490, 40, 'Passphrase',
+            ActivateButton(520, 330, 150, 50, 'Passphrase',
                 lambda: (
                     self.updatePasswordGen(passphrase=not self.passphrase),
                     self.buttons[5].activate()
                 ), active=False),
-            Button(460, 490, 120, 40, 'Cancel',
+            Button(470, 500, 120, 40, 'Cancel',
                    lambda: app.forms.pop(app.inFocusForm)),
-            Button(600, 490, 120, 40, 'Save',
+            Button(610, 500, 120, 40, 'Save',
                    lambda: self.saveEntry(app))
         ]
 
@@ -526,13 +542,15 @@ class NewEntryForm(Form):
         title = self.textboxes[0].text
         username = self.textboxes[1].text
         password = self.textboxes[2].text
+        seed = self.textboxes[4].text # textbox 3 is password length
 
         if self.prevEntry:
             prevEntryID = self.prevEntry[0]
-            updateEntry(prevEntryID, title, username, password, app.masterKey)
+            updateEntry(prevEntryID, title, username, password, seed,
+                        app.masterKey)
             loadEntries(app, prevEntryID)
         else:
-            entryID = addEntry(title, username, password, app.masterKey)
+            entryID = addEntry(title, username, password, seed, app.masterKey)
             loadEntries(app, entryID)
 
 class ConfirmationDialogue(Form):
@@ -614,7 +632,8 @@ def loadEntries(app, focusEntryID=0):
         return
     elif entries == None:
         EntryView(app, app.width, app.height, (-1, 'Welcome!',
-                  'Click the + to add your first entry...', 'Enjoy :)'))
+                  'Click the + to add your first entry...', 'Enjoy :)',
+                  '2FA is good, only when it"s decentrelized'))
     else:
         for entry in entries:
             EntryView(app, app.width, app.height, entry)
@@ -678,6 +697,10 @@ def onStep(app):
             reset(app)
         if hasattr(app, 'incorrectKeyCounter') and app.incorrectKeyCounter:
             app.incorrectKeyCounter -= 1
+        form = app.forms[app.inFocusForm]
+        if type(form) == EntryView:
+            if form.textboxes[2].text:
+                form.textboxes[2].text = generateTOTP(form.entry[4])
 
 def onKeyHold(app, keys):
     form = app.forms[app.inFocusForm]
@@ -698,6 +721,13 @@ def onKeyPress(app, key, modifiers):
     app.idleCounter = app.idleTime
     form = app.forms[app.inFocusForm]
     if type(form) == ConfirmationDialogue:
+        return
+    if key in 'Cc' and 'control' in modifiers and type(form) == EntryView:
+        pyperclip.copy(form.textboxes[1].text)
+        app.clipboardCounter = app.clipboardTime
+        return
+    elif key in 'Vv' and 'control' in modifiers:
+        form.textboxes[form.inFocusTB].write(pyperclip.paste())
         return
     if type(form) == EntryView:
         if key == 'right':
