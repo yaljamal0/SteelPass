@@ -2,6 +2,7 @@
 
 ### Todos
 - [x] 2FA (Time-based One-Time Password)
+- [x] Passphrases
 - [x] Copy entries support
 - [x] Time-based security measures
 - [x] Cryptography
