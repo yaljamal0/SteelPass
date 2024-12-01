@@ -10,6 +10,9 @@ from Crypto.Util.Padding import pad, unpad
 from Crypto.Protocol.KDF import PBKDF2
 import base64
 import pyperclip
+import hmac
+import hashlib
+import struct
 
 # global styling constants
 fontSize = 20
@@ -69,6 +72,26 @@ def decrypt(key, data):
     except:
         # either the key is invalid or the data is corrupt
         return False
+
+def generateTotp(seed):
+    seed = seed.replace(' ', '')
+    seed = seed.upper()
+    # get the current 30-second period
+    currentTime = int(time.time() // 30)
+    # decode the Base32 seed to bytes
+    seed = base64.b32decode(seed)
+    # pack current time into an 8-byte big-endian value
+    timeBytes = struct.pack(">Q", currentTime)
+    # use HMAC-SHA1 to hash the time with the seed
+    hmacHash = hmac.new(seed, timeBytes, hashlib.sha1).digest()
+    # extract a 4-byte segment from the hash
+    offset = hmacHash[-1] & 0x0F
+    # 31 bits to avoid negatives
+    code = struct.unpack(">I", hmacHash[offset:offset+4])[0] & 0x7FFFFFFF
+    # reduce to 6 digits
+    otp = code % (10 ** 6)
+    
+    return str(otp).zfill(6)
 
 # create a new database and table if they do not already exist
 def createDB():
@@ -233,19 +256,25 @@ class PasswordField(Textbox):
         super().__init__(x, y, w, h, text, placeholder)
         self.hide = hide
 
-    def generatePassword(self, length, uppers, lowers, nums, specials):
+    def generatePassword(self, length, uppers, lowers, nums, specials,
+                         passphrase):
         if not length.isdigit():
             return
         length = int(length)
         password = ''
-        characters = ''
-        characters += string.ascii_uppercase if uppers else ''
-        characters += string.ascii_lowercase if lowers else ''
-        characters += string.digits if nums else ''
-        characters += string.punctuation if specials else ''
-        if characters:
+        if passphrase:
+            elements = open('lotsofwords.txt', 'r').read().splitlines()
+        else:
+            elements = ''
+            elements += string.ascii_uppercase if uppers else ''
+            elements += string.ascii_lowercase if lowers else ''
+            elements += string.digits if nums else ''
+            elements += string.punctuation if specials else ''
+        if elements:
             for i in range(length):
-                password += random.choice(characters)
+                password += random.choice(elements)
+                if passphrase and i != length-1:
+                    password += '-'
         self.text = password
         self.viewIndex = 0
         self.cursorIndex = len(self.text)
@@ -287,9 +316,9 @@ class Button:
         self.hover = False
 
 class ActivateButton(Button):
-    def __init__(self, *args):
+    def __init__(self, *args, active=True):
         super().__init__(*args)
-        self.active = True
+        self.active = active
 
     def activate(self):
         self.active = not self.active
@@ -427,45 +456,50 @@ class NewEntryForm(Form):
             title, username, password = '', '', ''
 
         self.textboxes = [
-            Textbox(app.width/2-500/2-50, 150, 500, 50, title, 'Title'),
-            Textbox(app.width/2-500/2-50, 230, 500, 50, username, 'Username'),
-            PasswordField(app.width/2-500/2-50, 310, 430, 50, password,
+            Textbox(app.width/2-500/2-50, 100, 500, 50, title, 'Title'),
+            Textbox(app.width/2-500/2-50, 180, 500, 50, username, 'Username'),
+            PasswordField(app.width/2-500/2-50, 260, 430, 50, password,
                           'Password', False),
-            Textbox(620, 310, 50, 50, '16') # password length textbox
+            Textbox(620, 260, 50, 50, '16') # password length textbox
         ]
         # the index of the textbox currently in focus
         self.inFocusTB = 0
 
-        self.updatePasswordGen(True, True, True, True)
+        self.updatePasswordGen(True, True, True, True, False)
 
         self.buttons = [
-            Button(app.width/2+150, 310, 50, 50, generateImages,
+            Button(app.width/2+150, 260, 50, 50, generateImages,
                    lambda: self.textboxes[2].generatePassword(
                     self.textboxes[3].text, self.uppers, self.lowers, self.nums,
-                    self.specials)),
-            ActivateButton(100, 395, 100, 50, 'A-Z',
+                    self.specials, self.passphrase)),
+            ActivateButton(100, 345, 100, 50, 'A-Z',
                 lambda: (
                     self.updatePasswordGen(uppers=not self.uppers),
                     self.buttons[1].activate()
                 )),
-            ActivateButton(230, 395, 100, 50, 'a-z',
+            ActivateButton(230, 345, 100, 50, 'a-z',
                 lambda: (
                     self.updatePasswordGen(lowers=not self.lowers),
                     self.buttons[2].activate()
                 )),
-            ActivateButton(360, 395, 100, 50, '0-9',
+            ActivateButton(360, 345, 100, 50, '0-9',
                 lambda: (
                     self.updatePasswordGen(nums=not self.nums),
                     self.buttons[3].activate()
                 )),
-            ActivateButton(490, 395, 100, 50, '/*+&...',
+            ActivateButton(490, 345, 100, 50, '/*+&...',
                 lambda: (
                     self.updatePasswordGen(specials=not self.specials),
                     self.buttons[4].activate()
                 )),
-            Button(440, 480, 120, 40, 'Cancel',
+            ActivateButton(100, 415, 490, 40, 'Passphrase',
+                lambda: (
+                    self.updatePasswordGen(passphrase=not self.passphrase),
+                    self.buttons[5].activate()
+                ), active=False),
+            Button(460, 490, 120, 40, 'Cancel',
                    lambda: app.forms.pop(app.inFocusForm)),
-            Button(580, 480, 120, 40, 'Save',
+            Button(600, 490, 120, 40, 'Save',
                    lambda: self.saveEntry(app))
         ]
 
@@ -473,11 +507,12 @@ class NewEntryForm(Form):
         self.prevEntry = prevEntry
 
     def updatePasswordGen(self, uppers=None, lowers=None, nums=None,
-                          specials=None):
+                          specials=None, passphrase=None):
         self.uppers = uppers if uppers != None else self.uppers
         self.lowers = lowers if lowers != None else self.lowers
         self.nums = nums if nums != None else self.nums
         self.specials = specials if specials != None else self.specials
+        self.passphrase = passphrase if passphrase != None else self.passphrase
 
     def draw(self):
         drawRect(0, 0, 800, 600, fill='black', opacity=75)
