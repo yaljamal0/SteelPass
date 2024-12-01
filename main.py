@@ -7,12 +7,13 @@ from PIL import Image
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
 from Crypto.Util.Padding import pad, unpad
-from Crypto.Hash import SHA256
+from Crypto.Protocol.KDF import PBKDF2
 import base64
 import pyperclip
 
 # global styling constants
-fontSize = 0.025
+fontSize = 20
+characterWidth = (fontSize*3)//5
 steelGray = gradient(rgb(153, 158, 152), rgb(203, 205, 205), start='top-left')
 
 # global background and button icons
@@ -31,8 +32,10 @@ copyImages = (CMUImage(Image.open('assets/copy.png')),
               CMUImage(Image.open('assets/steel-copy.png')))
 
 def encrypt(key, data):
-    # hash the key to get a fixed length of 32 bytes for AES
-    key = SHA256.new(key.encode('utf-8')).digest()
+    # generate a random 16-byte salt to hash the key
+    salt = get_random_bytes(16)
+    # hash the key using the salt
+    key = PBKDF2(key.encode('utf-8'), salt, dkLen=32, count=100000)
     # generate a random 16-byte IV
     iv = get_random_bytes(16)
     # create the cipher object
@@ -42,7 +45,7 @@ def encrypt(key, data):
     # encrypt the padded message
     ciphertext = cipher.encrypt(paddedData)
     # combine the IV and ciphertext and encode them in base64
-    encryptedData = base64.b64encode(iv + ciphertext).decode('utf-8')
+    encryptedData = base64.b64encode(salt + iv + ciphertext).decode('utf-8')
 
     return encryptedData
 
@@ -50,11 +53,13 @@ def decrypt(key, data):
     try:
         # decode base64 encoding
         encryptedData = base64.b64decode(data)
-        # get IV (first 16 bytes) and ciphertext (remaining bytes)
-        iv = encryptedData[:16]
-        ciphertext = encryptedData[16:]
-        # hash the key to get a fixed length of 32 bytes for AES
-        key = SHA256.new(key.encode('utf-8')).digest()
+        # get salt (first 16 bytes), IV (next 16 bytes),
+        # and ciphertext (remaining bytes)
+        salt = encryptedData[:16]
+        iv = encryptedData[16:32]
+        ciphertext = encryptedData[32:]
+        # hash the key using the salt
+        key = PBKDF2(key.encode('utf-8'), salt, dkLen=32, count=100000)
         # create the cipher object
         cipher = AES.new(key, AES.MODE_CBC, iv)
         # decrypt the ciphertext and remove padding
@@ -140,7 +145,7 @@ def deleteEntry(entryID):
     conn.close()
 
 class Textbox:
-    def __init__(self, app, x, y, w, h, text='', placeholder=''):
+    def __init__(self, x, y, w, h, text='', placeholder=''):
         self.x = x
         self.y = y
         self.w = w
@@ -152,46 +157,33 @@ class Textbox:
         # max viewable characters given the width of the textbox
         # the -1 is there to keep distance between the last character
         # in the view and the right rectangle edge
-        adjFontSize = fontSize*app.width
-        characterWidth = 3*adjFontSize/5
-        self.maxChars = int((self.w*app.width // characterWidth - 1))
+        self.maxChars = self.w//characterWidth - 1
         # index of first character of the viewable part of the entered text
         self.viewIndex = 0
         # index of the blinking cursor that controls the view
         self.cursorIndex = len(text)
 
-    def draw(self, app):
-        x = self.x * app.width
-        y = self.y * app.height
-        w = self.w * app.width
-        h = self.h * app.height
-        adjFontSize = fontSize*app.width
-        characterWidth = 3*adjFontSize/5
-        drawRect(x, y, w, h, fill=None,
+    def draw(self):
+        drawRect(self.x, self.y, self.w, self.h, fill=None,
                     border=steelGray, borderWidth=2)
         text = self.text[self.viewIndex:self.viewIndex+self.maxChars]
         if hasattr(self, 'hide') and self.hide:
             text = '*' * len(text)
         # start characterWidth pixels to the right after the rectangle left edge
-        drawLabel(text, x+characterWidth, y+h/2, align='left',
-        fill=steelGray, size=adjFontSize, font='monospace')
+        drawLabel(text, self.x+characterWidth, self.y+self.h/2, align='left',
+        fill=steelGray, size=fontSize, font='monospace')
         if not self.text:
-            drawLabel(self.placeholder, x+characterWidth, y+h/2,
-                      align='left', fill='dimGray', size=adjFontSize*app.width,
+            drawLabel(self.placeholder, self.x+characterWidth, self.y+self.h/2,
+                      align='left', fill='dimGray', size=fontSize,
                       font='monospace')
 
-    def blinkCursor(self, app):
-        x = self.x * app.width
-        y = self.y * app.height
-        h = self.h * app.height
-        adjFontSize = fontSize*app.width
-        characterWidth = 3*adjFontSize/5
+    def blinkCursor(self):
         # offset the cursor to the right (+1) of last character
         offset = (len(
                     self.text[self.viewIndex:self.cursorIndex]
                     ) + 1) * characterWidth
-        drawLine(x + offset, y+characterWidth,
-                x + offset, y+h-characterWidth,
+        drawLine(self.x + offset, self.y+characterWidth,
+                self.x + offset, self.y+self.h-characterWidth,
                 fill='white', lineWidth=1)
 
     def shiftCursor(self, steps):
@@ -205,21 +197,15 @@ class Textbox:
         elif self.cursorIndex + steps > len(self.text):
             self.cursorIndex = len(self.text)
 
-    def checkMouseClick(self, app, mouseX, mouseY):
-        x = self.x * app.width
-        y = self.y * app.height
-        w = self.w * app.width
-        h = self.h * app.height
-        adjFontSize = fontSize*app.width
-        characterWidth = 3*adjFontSize/5
+    def checkMouseClick(self, mouseX, mouseY):
         # do nothing if click is out of the rectangle
-        if not (x < mouseX < x + w \
-            and y < mouseY < y + h):
+        if not (self.x < mouseX < self.x + self.w \
+            and self.y < mouseY < self.y + self.h):
             return
         self.shiftCursor(
             # calculate press location before and after exactly half the width
             # of each character for precision
-            int((mouseX-x-characterWidth/2)/characterWidth)
+            int((mouseX-self.x-characterWidth/2)/characterWidth)
             # move by difference between press location index and cursorIndex
             + self.viewIndex - self.cursorIndex)
         return True
@@ -243,8 +229,8 @@ class Textbox:
 
 # special textbox that generates passwords
 class PasswordField(Textbox):
-    def __init__(self, app, x, y, w, h, text='', placeholder='', hide=True):
-        super().__init__(app, x, y, w, h, text, placeholder)
+    def __init__(self, x, y, w, h, text='', placeholder='', hide=True):
+        super().__init__(x, y, w, h, text, placeholder)
         self.hide = hide
 
     def generatePassword(self, length, uppers, lowers, nums, specials):
@@ -275,32 +261,26 @@ class Button:
         self.action = action
         self.hover = hover
 
-    def draw(self, app):
-        x = self.x * app.width
-        y = self.y * app.height
-        w = self.w * app.width
-        h = self.h * app.height
-        adjFontSize = fontSize*app.width
+    def draw(self):
         fill = steelGray if self.hover else None
         fontColor = 'black' if self.hover else steelGray
-        drawRect(x, y, w, h, fill=fill, border=steelGray)
+        drawRect(self.x, self.y, self.w, self.h, fill=fill,
+                 border=steelGray)
         if type(self.content) == tuple:
             image = self.content[0] if self.hover else self.content[1]
-            drawImage(image, x+w/8, y+w/8, width=0.75*w, height=0.75*h)
+            drawImage(image, self.x+self.w/8, self.y+self.w/8,
+                      width=0.75*self.w, height=0.75*self.h)
         else:
-            drawLabel(self.content, x+w/2, y+h/2, fill=fontColor,
-            size=adjFontSize, font='monospace')
+            drawLabel(self.content, self.x+self.w/2, self.y+self.h/2,
+                      fill=fontColor, size=fontSize, font='monospace')
 
-    def checkBounds(self, app, px, py):
-        x = self.x * app.width
-        y = self.y * app.height
-        w = self.w * app.width
-        h = self.h * app.height
-        if x < px < x + w and y < py < y + h:
+    def checkBounds(self, x, y):
+        if self.x < x < self.x + self.w and \
+        self.y < y < self.y + self.h:
             return True
 
-    def checkMouseClick(self, app, mouseX, mouseY):
-        if self.checkBounds(app, mouseX, mouseY):
+    def checkMouseClick(self, mouseX, mouseY):
+        if self.checkBounds(mouseX, mouseY):
             self.action()
 
     def unhover(self):
@@ -314,23 +294,19 @@ class ActivateButton(Button):
     def activate(self):
         self.active = not self.active
 
-    def draw(self, app):
-        x = self.x * app.width
-        y = self.y * app.height
-        w = self.w * app.width
-        h = self.h * app.height
-        adjFontSize = fontSize*app.width
+    def draw(self):
         fill = steelGray if self.active else None
         fontColor = 'black' if self.active else steelGray
-        drawRect(x, y, w, h, fill=fill, border=steelGray)
+        drawRect(self.x, self.y, self.w, self.h, fill=fill,
+                 border=steelGray)
         if type(self.content) == tuple:
             image = self.content[0] if self.active else self.content[1]
-            drawImage(image, x+w/8, y+w/8,
-                      width=0.75*w, height=0.75*h)
+            drawImage(image, self.x+self.w/8, self.y+self.w/8,
+                      width=0.75*self.w, height=0.75*self.h)
         else:
             fontColor = 'black' if self.active else steelGray
-            drawLabel(self.content, x+w/2, y+h/2, fill=fontColor,
-            size=adjFontSize, font='monospace')
+            drawLabel(self.content, self.x+self.w/2, self.y+self.h/2,
+                      fill=fontColor, size=fontSize, font='monospace')
 
 # a form is a view or window that houses specific elements
 class Form:
@@ -338,16 +314,12 @@ class Form:
         self.w = w
         self.h = h
         # center all forms
-        self.x = 1/2 - self.w/2
-        self.y = 1/2 - self.h/2
+        self.x = app.width/2-self.w/2
+        self.y = app.height/2-self.h/2
 
-    def draw(self, app, opacity=10, border=None):
-        x = self.x * app.width
-        y = self.y * app.height
-        w = self.w * app.width
-        h = self.h * app.height
-        drawRect(x, y, w, h, fill='black')
-        drawImage(steelImage, x, y, width=w, height=h,
+    def draw(self, opacity=10, border=None):
+        drawRect(self.x, self.y, self.w, self.h, fill='black')
+        drawImage(steelImage, self.x, self.y, width=self.w, height=self.h,
                   opacity=opacity, border=border)
 
 class FloatingForm(Form):
@@ -355,65 +327,64 @@ class FloatingForm(Form):
         super().__init__(app, w, h)
 
         self.textboxes = [
-            Textbox(app, 0.025, 0.0333, 0.25, 0.0666, '', 'Search...')
+            Textbox(20, 20, 200, 40, '', 'Search...')
         ]
         self.inFocusTB = 0
 
         self.buttons = [
-            Button(0.925, 0.0333, 0.05, 0.0666, plusImages,
+            Button(app.width-60, 20, 40, 40, plusImages,
                 lambda: (
                     self.buttons[0].unhover(),
-                    NewEntryForm(app, 0.9, 0.9)
+                    NewEntryForm(app, 0.9*app.width, 0.9*app.height)
                 )),
-            Button(0.85, 0.0333, 0.05, 0.0666, pencilImages,
+            Button(app.width-120, 20, 40, 40, pencilImages,
                 lambda: (
                     self.buttons[1].unhover(),
-                    NewEntryForm(app, 0.9, 0.9,
+                    NewEntryForm(app, 0.9*app.width, 0.9*app.height,
                                 app.forms[app.inFocusForm].entry)
                 )),
-            Button(0.775, 0.0333, 0.05, 0.0666, trashImages,
+            Button(app.width-180, 20, 40, 40, trashImages,
                 lambda: (
                     self.buttons[2].unhover(),
-                    ConfirmationDialogue(app, 0.5, 0.3333,
+                    ConfirmationDialogue(app, 400, 200,
                         lambda: app.forms[app.inFocusForm].deleteEntry(app))
                 )),
-            Button(0.025, 0.5, 0.05, 0.0666, '<',
+            Button(20, app.height/2, 40, 40, '<',
                    lambda: EntryView.changeFormView(app, -1)),
-            Button(0.925, 0.5, 0.05, 0.0666, '>',
+            Button(app.width-60, app.height/2, 40, 40, '>',
                    lambda: EntryView.changeFormView(app, +1))
         ]
 
     def draw(self, app):
         totalEntries = \
             len(app.forms) - int(type(app.forms[app.inFocusForm]) != EntryView)
-        drawLabel(f'{app.inFocusForm+1}/{totalEntries}',
-                  app.width*(self.x+self.w/2), app.height*(self.y+self.h*0.0666)
-                  , size=0.03*app.width, fill=steelGray, font='monospace')
+        drawLabel(f'{app.inFocusForm+1}/{totalEntries}', self.w/2, 40, size=24,
+                  fill=steelGray, font='monospace')
         for textbox in self.textboxes:
-            textbox.draw(app)
+            textbox.draw()
         for button in self.buttons:
-            button.draw(app)
+            button.draw()
 
 class EntryView(Form):
     def __init__(self, app, w, h, entry):
         super().__init__(app, w, h)
         self.entry = entry
         self.textboxes = [
-            Textbox(app, 0.1875, 0.6333, 0.5375, 0.0833, entry[2]),
-            PasswordField(app, 0.1875, 0.75, 0.45, 0.0833, entry[3])
+            Textbox(150, 380, 430, 50, entry[2]),
+            PasswordField(150, 450, 360, 50, entry[3])
         ]
         # the index of the textbox currently in focus
         self.inFocusTB = 0
 
         self.buttons = [
-            ActivateButton(0.6625, 0.75, 0.0625, 0.0833, hideImages,
+            ActivateButton(530, 450, 50, 50, hideImages,
                 lambda: (
                     self.hidePassword(),
                     self.buttons[0].activate()
                 )),
-            Button(0.75, 0.6333, 0.0625, 0.0833, copyImages,
+            Button(600, 380, 50, 50, copyImages,
                    lambda: self.textboxes[0].copyToClipboard(app)),
-            Button(0.75, 0.75, 0.0625, 0.0833, copyImages,
+            Button(600, 450, 50, 50, copyImages,
                    lambda: self.textboxes[1].copyToClipboard(app))
         ]
 
@@ -431,20 +402,20 @@ class EntryView(Form):
         for i in range(len(app.forms)):
             if app.forms[i].entry[1].lower().startswith(match.lower()):
                 app.inFocusForm = i
+                break
 
     def deleteEntry(self, app):
         deleteEntry(self.entry[0])
         loadEntries(app)
 
-    def draw(self, app):
-        super().draw(app)
-        drawLabel(self.entry[1], app.width*(self.x+self.w/2),
-                  app.height*(self.y+self.h/3), size=0.08*app.width,
-                  fill=steelGray, font='monospace')
+    def draw(self):
+        super().draw()
+        drawLabel(self.entry[1], self.w/2, self.h/3, size=64, fill=steelGray,
+                  font='monospace')
         for textbox in self.textboxes:
-            textbox.draw(app)
+            textbox.draw()
         for button in self.buttons:
-            button.draw(app)
+            button.draw()
 
 class NewEntryForm(Form):
     def __init__(self, app, w, h, prevEntry=None):
@@ -456,11 +427,11 @@ class NewEntryForm(Form):
             title, username, password = '', '', ''
 
         self.textboxes = [
-            Textbox(app, 0.125, 0.25, 0.625, 0.0833, title, 'Title'),
-            Textbox(app, 0.125, 0.3833, 0.625, 0.0833, username, 'Username'),
-            PasswordField(app, 0.125, 0.5166, 0.5375, 0.0833, password,
+            Textbox(app.width/2-500/2-50, 150, 500, 50, title, 'Title'),
+            Textbox(app.width/2-500/2-50, 230, 500, 50, username, 'Username'),
+            PasswordField(app.width/2-500/2-50, 310, 430, 50, password,
                           'Password', False),
-            Textbox(app, 0.775, 0.5166, 0.0625, 0.0833, '16') # password length textbox
+            Textbox(620, 310, 50, 50, '16') # password length textbox
         ]
         # the index of the textbox currently in focus
         self.inFocusTB = 0
@@ -468,33 +439,33 @@ class NewEntryForm(Form):
         self.updatePasswordGen(True, True, True, True)
 
         self.buttons = [
-            Button(0.6875, 0.5166, 0.0625, 0.0833, generateImages,
+            Button(app.width/2+150, 310, 50, 50, generateImages,
                    lambda: self.textboxes[2].generatePassword(
                     self.textboxes[3].text, self.uppers, self.lowers, self.nums,
                     self.specials)),
-            ActivateButton(0.125, 0.6583, 0.125, 0.0833, 'A-Z',
+            ActivateButton(100, 395, 100, 50, 'A-Z',
                 lambda: (
                     self.updatePasswordGen(uppers=not self.uppers),
                     self.buttons[1].activate()
                 )),
-            ActivateButton(0.2875, 0.6583, 0.125, 0.0833, 'a-z',
+            ActivateButton(230, 395, 100, 50, 'a-z',
                 lambda: (
                     self.updatePasswordGen(lowers=not self.lowers),
                     self.buttons[2].activate()
                 )),
-            ActivateButton(0.45, 0.6583, 0.125, 0.0833, '0-9',
+            ActivateButton(360, 395, 100, 50, '0-9',
                 lambda: (
                     self.updatePasswordGen(nums=not self.nums),
                     self.buttons[3].activate()
                 )),
-            ActivateButton(0.6125, 0.6583, 0.125, 0.0833, '/*+&...',
+            ActivateButton(490, 395, 100, 50, '/*+&...',
                 lambda: (
                     self.updatePasswordGen(specials=not self.specials),
                     self.buttons[4].activate()
                 )),
-            Button(0.55, 0.8, 0.15, 0.0666, 'Cancel',
+            Button(440, 480, 120, 40, 'Cancel',
                    lambda: app.forms.pop(app.inFocusForm)),
-            Button(0.725, 0.8, 0.15, 0.0666, 'Save',
+            Button(580, 480, 120, 40, 'Save',
                    lambda: self.saveEntry(app))
         ]
 
@@ -508,12 +479,13 @@ class NewEntryForm(Form):
         self.nums = nums if nums != None else self.nums
         self.specials = specials if specials != None else self.specials
 
-    def draw(self, app):
-        super().draw(app, 30, 'white')
+    def draw(self):
+        drawRect(0, 0, 800, 600, fill='black', opacity=75)
+        super().draw(30, 'white')
         for textbox in self.textboxes:
-            textbox.draw(app)
+            textbox.draw()
         for button in self.buttons:
-            button.draw(app)
+            button.draw()
 
     def saveEntry(self, app):
         title = self.textboxes[0].text
@@ -533,9 +505,9 @@ class ConfirmationDialogue(Form):
         super().__init__(app, w, h)
 
         self.buttons = [
-            Button(0.3625, 0.5333, 0.125, 0.0666, 'No',
+            Button(290, 320, 100, 40, 'No',
                    lambda: app.forms.pop(app.inFocusForm)),
-            Button(0.5125, 0.5333, 0.125, 0.0666, 'Yes',
+            Button(410, 320, 100, 40, 'Yes',
                 lambda: (
                     app.forms.pop(app.inFocusForm),
                     action()
@@ -544,13 +516,13 @@ class ConfirmationDialogue(Form):
 
         app.forms.insert(app.inFocusForm, self)
 
-    def draw(self, app):
-        super().draw(app, 30, 'white')
-        drawLabel('Are you sure?', app.width*(self.x+self.w/2),
-                  app.height*(self.y+self.h/3), fill=steelGray,
-                  size=0.0325*app.width, font='monospace')
+    def draw(self):
+        drawRect(0, 0, 800, 600, fill='black', opacity=75)
+        super().draw(30, 'white')
+        drawLabel('Are you sure?', 400, 270, fill=steelGray, size=26,
+                  font='monospace')
         for button in self.buttons:
-            button.draw(app)
+            button.draw()
 
 class UnlockForm(Form):
     def __init__(self, app, w, h):
@@ -560,10 +532,9 @@ class UnlockForm(Form):
         buttonContent = 'Start' if self.firstUse else 'Unlock'
 
         self.buttons = [
-            Button(self.w/2-0.125/2, 0.5916, 0.125, 0.0666, buttonContent,
+            Button(app.width/2-100/2, 355, 100, 40, buttonContent,
                    lambda: self.unlock(app)),
-            ActivateButton(self.w*0.75, self.h*0.4583, 0.0625*self.w,
-                0.0833*self.h, hideImages,
+            ActivateButton(600, 275, 50, 50, hideImages,
                 lambda: (
                     self.hidePassword(),
                     self.buttons[1].activate()
@@ -571,7 +542,7 @@ class UnlockForm(Form):
         ]
 
         self.textboxes = [
-            PasswordField(app, 0.1875, 0.4583, 0.5375, 0.0833)
+            PasswordField(app.width/2-500/2, app.height/2-50/2, 430, 50)
         ]
         self.inFocusTB = 0
 
@@ -583,24 +554,21 @@ class UnlockForm(Form):
         self.textboxes[0].hide = not self.textboxes[0].hide
 
     def draw(self, app):
-        super().draw(app)
-        adjFontSize = fontSize*app.width
+        super().draw()
         if self.firstUse:
             message = 'Create a secure master password'
         else:
             message = 'Enter your master password'
-        drawLabel(message, app.width*(self.x+self.w/2),
-                  app.height*(self.y+self.h*0.375), fill=steelGray,
-                  size=0.0325*app.width, font='monospace')
+        drawLabel(message, 400, 225, fill=steelGray, size=26,
+                  font='monospace')
         for button in self.buttons:
-            button.draw(app)
+            button.draw()
         for textbox in self.textboxes:
-            textbox.draw(app)
+            textbox.draw()
         if hasattr(app, 'incorrectKeyCounter') and app.incorrectKeyCounter:
             drawLabel(f'Incorrect master key. Please try again.',
-                      app.width*(self.x+self.w/2),
-                      app.height*(self.y+self.h*0.93), fill=steelGray,
-                      size=adjFontSize, font='monospace')
+                      app.width/2, app.height*0.93, fill=steelGray,
+                      size=fontSize, font='monospace')
 
 def loadEntries(app, focusEntryID=0):
     app.forms = []
@@ -610,18 +578,18 @@ def loadEntries(app, focusEntryID=0):
         app.incorrectKeyCounter = 5 # 5-second decryption failure message
         return
     elif entries == None:
-        EntryView(app, 1, 1, (-1, 'Welcome!',
+        EntryView(app, app.width, app.height, (-1, 'Welcome!',
                   'Click the + to add your first entry...', 'Enjoy :)'))
     else:
         for entry in entries:
-            EntryView(app, 1, 1, entry)
+            EntryView(app, app.width, app.height, entry)
         app.forms.sort(key=lambda form: form.entry[1].lower())
         app.inFocusForm = len(app.forms)//2
         for i in range(len(app.forms)):
             if app.forms[i].entry[0] == focusEntryID:
                 app.inFocusForm = i
                 break
-    app.floatingForm = FloatingForm(app, 1, 1)
+    app.floatingForm = FloatingForm(app, app.width, app.height)
 
 def reset(app):
     app.stepsPerSecond = 60
@@ -634,7 +602,7 @@ def reset(app):
     app.idleCounter = app.idleTime
 
     app.masterKey = ''
-    app.forms = [UnlockForm(app, 1, 1)]
+    app.forms = [UnlockForm(app, app.width, app.height)]
     app.inFocusForm = 0
 
 def onAppStart(app):
@@ -642,25 +610,24 @@ def onAppStart(app):
 
 def redrawAll(app):
     form = app.forms[app.inFocusForm]
-    adjFontSize = fontSize*app.width
     if type(form) == EntryView:
-        form.draw(app)
+        form.draw()
         app.floatingForm.draw(app)
     elif type(form) == UnlockForm:
         form.draw(app)
     else:
-        app.forms[app.inFocusForm+1].draw(app)
+        app.forms[app.inFocusForm+1].draw()
         app.floatingForm.draw(app)
-        form.draw(app)
+        form.draw()
     if 0 < app.steps % app.stepsPerSecond < app.stepsPerSecond//2:
         if type(form) in [NewEntryForm, UnlockForm]:
-            form.textboxes[form.inFocusTB].blinkCursor(app)
+            form.textboxes[form.inFocusTB].blinkCursor()
         else:
-            app.floatingForm.textboxes[0].blinkCursor(app)
+            app.floatingForm.textboxes[0].blinkCursor()
     if app.clipboardCounter:
         drawLabel(f'Clearing the clipboard in {app.clipboardCounter} seconds...'
-                  , app.width/2, app.height*0.93, fill=steelGray,
-                  size=adjFontSize, font='monospace')
+                  , app.width/2, app.height*0.93, fill=steelGray, size=fontSize,
+                  font='monospace')
 
 def onStep(app):
     app.steps += 1
@@ -724,24 +691,24 @@ def onMousePress(app, mouseX, mouseY):
     app.idleCounter = app.idleTime
     form = app.forms[app.inFocusForm]
     for button in form.buttons:
-        button.checkMouseClick(app, mouseX, mouseY)
+        button.checkMouseClick(mouseX, mouseY)
     if type(form) in [NewEntryForm, UnlockForm]:
         for i in range(len(form.textboxes)):
-            if form.textboxes[i].checkMouseClick(app, mouseX, mouseY):
+            if form.textboxes[i].checkMouseClick(mouseX, mouseY):
                 form.inFocusTB = i
     elif type(form) == EntryView:
         for button in app.floatingForm.buttons:
-            button.checkMouseClick(app, mouseX, mouseY)
+            button.checkMouseClick(mouseX, mouseY)
         for textbox in app.floatingForm.textboxes:
-            textbox.checkMouseClick(app, mouseX, mouseY)
+            textbox.checkMouseClick(mouseX, mouseY)
 
 def onMouseMove(app, mouseX, mouseY):
     form = app.forms[app.inFocusForm]
     for button in form.buttons:
-        button.hover = button.checkBounds(app, mouseX, mouseY)
+        button.hover = button.checkBounds(mouseX, mouseY)
     if type(form) == EntryView:
         for button in app.floatingForm.buttons:
-            button.hover = button.checkBounds(app, mouseX, mouseY)
+            button.hover = button.checkBounds(mouseX, mouseY)
 
 createDB()
 runApp(width=800, height=600)
