@@ -75,6 +75,8 @@ def decrypt(key, data):
 
 def generateTOTP(seed):
     try:
+        if not seed:
+            return ''
         seed = seed.replace(' ', '')
         seed = seed.upper()
         # get the current 30-second period
@@ -410,7 +412,7 @@ class EntryView(Form):
         self.textboxes = [
             Textbox(150, 330, 430, 50, entry[2], 'No username'),
             PasswordField(150, 400, 360, 50, entry[3], 'No password'),
-            PasswordField(150, 470, 430, 50,  generateTOTP(entry[4]),
+            PasswordField(150, 470, 430, 50, generateTOTP(entry[4]),
                           '2FA is not enabled for this entry', hide=False)
         ]
         # the index of the textbox currently in focus
@@ -452,7 +454,7 @@ class EntryView(Form):
 
     def draw(self):
         super().draw()
-        drawLabel(self.entry[1], self.w/2, self.h/3, size=64, fill=steelGray,
+        drawLabel(self.entry[1], self.w/2, self.h*0.3, size=64, fill=steelGray,
                   font='monospace')
         for textbox in self.textboxes:
             textbox.draw()
@@ -632,8 +634,7 @@ def loadEntries(app, focusEntryID=0):
         return
     elif entries == None:
         EntryView(app, app.width, app.height, (-1, 'Welcome!',
-                  'Click the + to add your first entry...', 'Enjoy :)',
-                  '2FA is good, only when it"s decentrelized'))
+                  'Click the + to add your first entry...', 'Enjoy :)', ''))
     else:
         for entry in entries:
             EntryView(app, app.width, app.height, entry)
@@ -646,6 +647,7 @@ def loadEntries(app, focusEntryID=0):
     app.floatingForm = FloatingForm(app, app.width, app.height)
 
 def reset(app):
+    app.inspectorEnabled = False
     app.stepsPerSecond = 60
     app.steps = 0
     app.keyHoldSpeed = app.stepsPerSecond//8 # 8 presses a second
